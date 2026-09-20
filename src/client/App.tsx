@@ -1,0 +1,145 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AlertCircle, ArrowUpRight, Check, Copy, Github, LoaderCircle, LogOut, Plus, RefreshCw, Settings as SettingsIcon, Trash2, Users, X } from 'lucide-react';
+import { api } from './api';
+import { DEFAULT_SETTINGS, issueColumn, type Issue, type Settings, type Workspace, type WorkspaceMember } from '../shared/types';
+
+type User = { login: string; avatarUrl: string; authType: string; workspace: { id: string; name: string; role: 'owner' | 'member' } };
+
+function Login({ onLogin }: { onLogin: () => void }) {
+  const [token, setToken] = useState(''); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
+  async function loginPat(e: React.FormEvent) {
+    e.preventDefault(); setBusy(true); setError('');
+    try { await api.patLogin(token); onLogin(); } catch (err) { setError(err instanceof Error ? err.message : 'ログインに失敗しました'); } finally { setBusy(false); }
+  }
+  return <main className="login-shell">
+    <section className="login-copy">
+      <div className="brand"><span className="brand-mark">ib</span><span>issueban</span></div>
+      <p className="eyebrow">ISSUES, IN MOTION</p>
+      <h1>GitHub Issues を、<br /><em>流れ</em>に変える。</h1>
+      <p className="lead">リポジトリをまたぐ Issue をひとつのボードへ。カードを動かすだけで、GitHub のラベルまで同期します。</p>
+      <div className="features"><span>Multi-repository</span><span>Label sync</span><span>Edge-native</span></div>
+    </section>
+    <section className="login-panel">
+      <div className="login-card">
+        <div className="card-icon"><Github size={26} /></div>
+        <h2>ワークスペースに接続</h2>
+        <p>GitHub アカウントで安全に始められます。</p>
+        <a className="button primary oauth" href="/api/auth/oauth/start"><Github size={18} /> GitHub OAuth で続ける</a>
+        <div className="divider"><span>または PAT を使用</span></div>
+        <form onSubmit={loginPat}>
+          <label>Personal access token</label>
+          <input type="password" autoComplete="off" placeholder="github_pat_••••••••" value={token} onChange={(e) => setToken(e.target.value)} />
+          {error && <p className="form-error"><AlertCircle size={14} />{error}</p>}
+          <button className="button secondary" disabled={busy || token.length < 20}>{busy ? <LoaderCircle className="spin" size={17} /> : null}PAT で接続</button>
+        </form>
+        <p className="security-note">トークンは暗号化され、ブラウザには保存されません。</p>
+      </div>
+    </section>
+  </main>;
+}
+
+function IssueCard({ issue, onDragStart }: { issue: Issue; onDragStart: () => void }) {
+  return <article className="issue-card" draggable onDragStart={onDragStart}>
+    <div className="issue-meta"><span>{issue.repository}</span><span>#{issue.number}</span></div>
+    <h3>{issue.title}</h3>
+    <div className="labels">{issue.labels.slice(0, 3).map((label) => <span key={label.name} style={{ '--label': `#${label.color}` } as React.CSSProperties}>{label.name}</span>)}</div>
+    <footer>
+      <div className="avatars">{issue.assignees.slice(0, 3).map((user) => <img key={user.login} src={user.avatarUrl} alt={user.login} title={user.login} />)}</div>
+      <a href={issue.htmlUrl} target="_blank" rel="noreferrer" aria-label="GitHub で開く"><ArrowUpRight size={16} /></a>
+    </footer>
+  </article>;
+}
+
+function CreateIssue({ settings, initialColumn, onClose, onCreated }: { settings: Settings; initialColumn: string; onClose: () => void; onCreated: () => void }) {
+  const [form, setForm] = useState({ title: '', body: '', issuebanLabel: '', columnId: initialColumn }); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  const destination = settings.routingRules.find((rule) => rule.label.toLowerCase() === form.issuebanLabel.toLowerCase())?.repository ?? settings.repositories[0];
+  async function submit(e: React.FormEvent) { e.preventDefault(); setBusy(true); setError(''); try { await api.createIssue(form); onCreated(); } catch (err) { setError(err instanceof Error ? err.message : '作成に失敗しました'); setBusy(false); } }
+  return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal" onMouseDown={(e) => e.stopPropagation()}>
+    <button className="icon-button close" onClick={onClose}><X size={20} /></button><p className="eyebrow">NEW ISSUE</p><h2>Issue を追加</h2>
+    <form onSubmit={submit} className="stack">
+      <label>タイトル<input autoFocus required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="何をする必要がありますか？" /></label>
+      <label>説明<textarea value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} placeholder="背景や完了条件を入力…" /></label>
+      <div className="form-grid"><label>Issueban ラベル<input value={form.issuebanLabel} onChange={(e) => setForm({ ...form, issuebanLabel: e.target.value })} placeholder="例: frontend" /></label>
+      <label>ステータス<select value={form.columnId} onChange={(e) => setForm({ ...form, columnId: e.target.value })}>{settings.columns.map((column) => <option key={column.id} value={column.id}>{column.name}</option>)}</select></label></div>
+      <div className="destination">作成先 <strong>{destination ?? '未設定'}</strong></div>{error && <p className="form-error">{error}</p>}
+      <button className="button primary" disabled={busy || !destination}>{busy && <LoaderCircle className="spin" size={17} />}Issue を作成</button>
+    </form>
+  </section></div>;
+}
+
+function SettingsModal({ value, onClose, onSave }: { value: Settings; onClose: () => void; onSave: (settings: Settings) => Promise<void> }) {
+  const [draft, setDraft] = useState<Settings>(structuredClone(value)); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  const repos = draft.repositories.join('\n');
+  function addRule() { setDraft({ ...draft, routingRules: [...draft.routingRules, { id: crypto.randomUUID(), label: '', repository: draft.repositories[0] ?? '' }] }); }
+  async function submit(e: React.FormEvent) { e.preventDefault(); setBusy(true); setError(''); try { await onSave(draft); onClose(); } catch (err) { setError(err instanceof Error ? err.message : '保存に失敗しました'); setBusy(false); } }
+  return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal settings-modal" onMouseDown={(e) => e.stopPropagation()}>
+    <button className="icon-button close" onClick={onClose}><X size={20} /></button><p className="eyebrow">BOARD SETTINGS</p><h2>ボード設定</h2>
+    <form onSubmit={submit} className="stack">
+      <label>対象リポジトリ <small>1 行に owner/repo を 1 つ</small><textarea value={repos} onChange={(e) => setDraft({ ...draft, repositories: e.target.value.split('\n').map((line) => line.trim()).filter(Boolean) })} placeholder={'acme/web\nacme/api'} /></label>
+      <div className="setting-heading"><div><strong>カラムと同期ラベル</strong><small>移動時、このラベルに自動更新されます</small></div></div>
+      <div className="editable-list">{draft.columns.map((column, index) => <div className="column-edit" key={column.id}>
+        <input aria-label="色" className="color-input" type="color" value={`#${column.color.replace('#', '')}`} onChange={(e) => { const columns = [...draft.columns]; columns[index] = { ...column, color: e.target.value.slice(1) }; setDraft({ ...draft, columns }); }} />
+        <input required value={column.name} onChange={(e) => { const columns = [...draft.columns]; columns[index] = { ...column, name: e.target.value }; setDraft({ ...draft, columns }); }} />
+        <input required value={column.label} onChange={(e) => { const columns = [...draft.columns]; columns[index] = { ...column, label: e.target.value }; setDraft({ ...draft, columns }); }} />
+      </div>)}</div>
+      <div className="setting-heading"><div><strong>ラベルルーティング</strong><small>Issueban ラベルごとに作成先を切り替えます</small></div><button type="button" className="text-button" onClick={addRule}>＋ ルール追加</button></div>
+      <div className="editable-list">{draft.routingRules.map((rule, index) => <div className="rule-edit" key={rule.id}>
+        <input required placeholder="frontend" value={rule.label} onChange={(e) => { const routingRules = [...draft.routingRules]; routingRules[index] = { ...rule, label: e.target.value }; setDraft({ ...draft, routingRules }); }} />
+        <span>→</span><select value={rule.repository} onChange={(e) => { const routingRules = [...draft.routingRules]; routingRules[index] = { ...rule, repository: e.target.value }; setDraft({ ...draft, routingRules }); }}>{draft.repositories.map((repo) => <option key={repo}>{repo}</option>)}</select>
+        <button type="button" className="icon-button" onClick={() => setDraft({ ...draft, routingRules: draft.routingRules.filter((_, i) => i !== index) })}><X size={16} /></button>
+      </div>)}</div>
+      {error && <p className="form-error">{error}</p>}<button className="button primary" disabled={busy}>{busy && <LoaderCircle className="spin" size={17} />}設定を保存</button>
+    </form>
+  </section></div>;
+}
+
+function TeamModal({ user, onClose }: { user: User; onClose: () => void }) {
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]); const [members, setMembers] = useState<WorkspaceMember[]>([]);
+  const [newName, setNewName] = useState(''); const [joinCode, setJoinCode] = useState(''); const [invite, setInvite] = useState('');
+  const [copied, setCopied] = useState(false); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  const refresh = useCallback(async () => { try { const [spaces, team] = await Promise.all([api.workspaces(), api.members()]); setWorkspaces(spaces.workspaces); setMembers(team.members); } catch (err) { setError(err instanceof Error ? err.message : '読み込みに失敗しました'); } }, []);
+  useEffect(() => { void refresh(); }, [refresh]);
+  async function action(fn: () => Promise<unknown>, reload = false) { setBusy(true); setError(''); try { await fn(); if (reload) window.location.reload(); else await refresh(); } catch (err) { setError(err instanceof Error ? err.message : '操作に失敗しました'); } finally { setBusy(false); } }
+  async function copyInvite() { await navigator.clipboard.writeText(invite); setCopied(true); window.setTimeout(() => setCopied(false), 1600); }
+  return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal team-modal" onMouseDown={(e) => e.stopPropagation()}>
+    <button className="icon-button close" onClick={onClose}><X size={20} /></button><p className="eyebrow">TEAM WORKSPACE</p><h2>チーム</h2>
+    <div className="workspace-current"><div><small>現在のワークスペース</small><strong>{user.workspace.name}</strong></div><span className="role-badge">{user.workspace.role === 'owner' ? 'Owner' : 'Member'}</span></div>
+    <div className="team-section"><h3>ワークスペース</h3><div className="workspace-list">{workspaces.map((workspace) => <button key={workspace.id} className={`workspace-row ${workspace.id === user.workspace.id ? 'active' : ''}`} disabled={busy || workspace.id === user.workspace.id} onClick={() => void action(() => api.switchWorkspace(workspace.id), true)}><span>{workspace.name}<small>{workspace.memberCount} members</small></span>{workspace.id === user.workspace.id && <Check size={17} />}</button>)}</div>
+      <div className="inline-form"><input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="新しいチーム名" /><button className="button secondary" disabled={busy || !newName.trim()} onClick={() => void action(async () => { await api.createWorkspace(newName); window.location.reload(); })}>作成</button></div>
+      <div className="inline-form"><input value={joinCode} onChange={(e) => setJoinCode(e.target.value)} placeholder="招待コードを貼り付け" /><button className="button secondary" disabled={busy || joinCode.length < 10} onClick={() => void action(() => api.joinWorkspace(joinCode), true)}>参加</button></div>
+    </div>
+    <div className="team-section"><div className="setting-heading"><div><h3>メンバー</h3><small>同じボード設定と Issue を共有します</small></div>{user.workspace.role === 'owner' && <button className="text-button" disabled={busy} onClick={() => void action(async () => { const result = await api.createInvite(); setInvite(result.code); })}>＋ 招待を作成</button>}</div>
+      {invite && <div className="invite-code"><code>{invite}</code><button className="icon-button" onClick={() => void copyInvite()}>{copied ? <Check size={17} /> : <Copy size={17} />}</button><small>1 回のみ使用可能・7 日間有効</small></div>}
+      <div className="member-list">{members.map((member) => <div className="member-row" key={member.id}><img src={member.avatarUrl} alt="" /><div><strong>{member.login}</strong><small>{member.role === 'owner' ? 'Owner' : 'Member'}</small></div>{user.workspace.role === 'owner' && member.role !== 'owner' && <button className="icon-button danger" title="メンバーを削除" onClick={() => void action(() => api.removeMember(member.id))}><Trash2 size={16} /></button>}</div>)}</div>
+    </div>
+    {user.workspace.role === 'member' && <button className="leave-button" disabled={busy} onClick={() => void action(() => api.leaveWorkspace(), true)}>このワークスペースから退出</button>}
+    {error && <p className="form-error"><AlertCircle size={14} />{error}</p>}
+  </section></div>;
+}
+
+function Board({ user, onLogout }: { user: User; onLogout: () => void }) {
+  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS); const [issues, setIssues] = useState<Issue[]>([]); const [errors, setErrors] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true); const [dragging, setDragging] = useState<Issue | null>(null); const [createColumn, setCreateColumn] = useState<string | null>(null); const [showSettings, setShowSettings] = useState(false); const [showTeam, setShowTeam] = useState(false);
+  const load = useCallback(async () => { setLoading(true); try { const [s, data] = await Promise.all([api.settings(), api.issues()]); setSettings(s.settings); setIssues(data.issues); setErrors(data.errors.map((e) => `${e.repository}: ${e.message}`)); } finally { setLoading(false); } }, []);
+  useEffect(() => { void load(); }, [load]);
+  const grouped = useMemo(() => Object.fromEntries(settings.columns.map((column) => [column.id, issues.filter((issue) => issueColumn(issue, settings) === column.id)])), [issues, settings]);
+  async function drop(columnId: string) { if (!dragging || issueColumn(dragging, settings) === columnId) return setDragging(null); const previous = issues; setIssues(issues.map((item) => item.id === dragging.id ? { ...item, labels: [...item.labels.filter((label) => !settings.columns.some((col) => col.label.toLowerCase() === label.name.toLowerCase())), { name: settings.columns.find((c) => c.id === columnId)!.label, color: settings.columns.find((c) => c.id === columnId)!.color }] } : item)); try { await api.moveIssue(dragging, columnId); } catch (error) { setIssues(previous); setErrors([error instanceof Error ? error.message : '移動に失敗しました']); } setDragging(null); }
+  return <div className="app-shell"><header className="topbar"><div className="brand"><span className="brand-mark">ib</span><span>issueban</span></div><div className="top-actions"><button className="icon-button" title="再読み込み" onClick={() => void load()}><RefreshCw size={18} className={loading ? 'spin' : ''} /></button><button className="icon-button" title="チーム" onClick={() => setShowTeam(true)}><Users size={18} /></button><button className="icon-button" title="設定" onClick={() => setShowSettings(true)}><SettingsIcon size={18} /></button><div className="user"><img src={user.avatarUrl} alt="" /><span>{user.login}</span></div><button className="icon-button" title="ログアウト" onClick={onLogout}><LogOut size={18} /></button></div></header>
+    <main className="board-wrap"><div className="board-heading"><div><p className="eyebrow">GITHUB ISSUE BOARD</p><h1>{user.workspace.name}</h1></div><button className="button primary compact" onClick={() => setCreateColumn(settings.columns[0]?.id ?? '')}><Plus size={18} />Issue を追加</button></div>
+    {errors.length > 0 && <div className="notice"><AlertCircle size={17} /><div>{errors.map((error) => <p key={error}>{error}</p>)}</div><button onClick={() => setErrors([])}><X size={15} /></button></div>}
+    {!loading && settings.repositories.length === 0 ? <section className="empty-state"><div className="empty-icon"><SettingsIcon /></div><h2>最初のリポジトリを接続</h2><p>対象リポジトリとカラムを設定すると、Issue がここに並びます。</p><button className="button primary" onClick={() => setShowSettings(true)}>ボードを設定</button></section> :
+    <div className="board">{settings.columns.map((column) => <section className="column" key={column.id} onDragOver={(e) => e.preventDefault()} onDrop={() => void drop(column.id)}><header><div><i style={{ background: `#${column.color}` }} /><h2>{column.name}</h2><span>{grouped[column.id]?.length ?? 0}</span></div><button className="icon-button mini" onClick={() => setCreateColumn(column.id)}><Plus size={17} /></button></header><div className="card-list">{grouped[column.id]?.map((issue) => <IssueCard key={issue.id} issue={issue} onDragStart={() => setDragging(issue)} />)}{loading && [1, 2].map((n) => <div className="issue-card skeleton" key={n} />)}<button className="add-card" onClick={() => setCreateColumn(column.id)}><Plus size={15} />カードを追加</button></div></section>)}</div>}</main>
+    {createColumn && <CreateIssue settings={settings} initialColumn={createColumn} onClose={() => setCreateColumn(null)} onCreated={() => { setCreateColumn(null); void load(); }} />}
+    {showSettings && <SettingsModal value={settings} onClose={() => setShowSettings(false)} onSave={async (next) => { const result = await api.saveSettings(next); setSettings(result.settings); void load(); }} />}
+    {showTeam && <TeamModal user={user} onClose={() => setShowTeam(false)} />}
+  </div>;
+}
+
+export function App() {
+  const [user, setUser] = useState<User | null | undefined>(undefined);
+  const check = useCallback(() => api.me().then((data) => setUser({ ...data.user, workspace: data.workspace })).catch(() => setUser(null)), []);
+  useEffect(() => { void check(); }, [check]);
+  if (user === undefined) return <div className="boot"><span className="brand-mark">ib</span><LoaderCircle className="spin" /></div>;
+  if (!user) return <Login onLogin={check} />;
+  return <Board user={user} onLogout={async () => { await api.logout(); setUser(null); }} />;
+}

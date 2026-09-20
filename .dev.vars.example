@@ -1,0 +1,6 @@
+# Generate with: openssl rand -base64 32
+APP_SECRET="replace-with-a-long-random-secret"
+
+# Optional: PAT login works without these values.
+GITHUB_CLIENT_ID="your-oauth-app-client-id"
+GITHUB_CLIENT_SECRET="your-oauth-app-client-secret"
