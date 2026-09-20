@@ -50,7 +50,7 @@ npx wrangler login
 npx wrangler d1 create issueban
 ```
 
-2. 出力された `database_id` を `wrangler.jsonc` の `REPLACE_WITH_D1_DATABASE_ID` と置き換えます。
+2. 別の Cloudflare アカウントへデプロイする場合は、出力された `database_id` を `wrangler.jsonc` に設定します。このリポジトリの本番用 D1 ID は設定済みです。
 3. migration、secret、デプロイを実行します。
 
 ```bash

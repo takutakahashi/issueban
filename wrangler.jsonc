@@ -11,7 +11,7 @@
     {
       "binding": "DB",
       "database_name": "issueban",
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "database_id": "93d2fca7-1af0-4c8b-8d7a-d9fb9c4e39ac",
       "migrations_dir": "migrations"
     }
   ]
