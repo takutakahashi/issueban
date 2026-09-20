@@ -205,6 +205,16 @@ app.delete('/api/workspace/members/:userId', async (c) => {
   return c.body(null, 204);
 });
 
+app.delete('/api/workspace', async (c) => {
+  if (c.get('workspace').role !== 'owner') return c.json({ error: 'オーナーのみ削除できます' }, 403);
+  const workspaceId = c.get('workspace').id;
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE users SET current_workspace_id = NULL WHERE current_workspace_id = ?').bind(workspaceId),
+    c.env.DB.prepare('DELETE FROM workspaces WHERE id = ?').bind(workspaceId)
+  ]);
+  return c.body(null, 204);
+});
+
 app.post('/api/workspace/leave', async (c) => {
   if (c.get('workspace').role === 'owner') return c.json({ error: 'オーナーはワークスペースから退出できません' }, 422);
   await c.env.DB.batch([
