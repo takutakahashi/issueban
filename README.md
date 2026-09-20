@@ -7,6 +7,7 @@ GitHub Issues と双方向に同期する、Cloudflare Workers ネイティブ�
 - カード移動時に GitHub Issue のステータスラベルを自動更新
 - GitHub OAuth App / Personal access token (PAT) の両方に対応
 - 共有ワークスペース、招待コード、オーナー／メンバー権限によるチーム開発
+- PWA としてホーム画面へインストール可能。アプリシェルはオフラインでも起動
 - OAuth/PAT は AES-GCM で暗号化、セッション ID は SHA-256 ハッシュで D1 に保存
 
 ## Stack
@@ -71,6 +72,10 @@ npm run typecheck
 npm test
 npm run build
 ```
+
+## PWA
+
+対応ブラウザではインストール案内が表示され、デスクトップやホーム画面から standalone アプリとして起動できます。Service Worker はアプリシェルと静的アセットのみをキャッシュし、認証情報や `/api/*` のレスポンスはキャッシュしません。GitHub Issue の取得・更新にはネットワーク接続が必要です。
 
 ## Security notes
 
