@@ -13,7 +13,8 @@ type Bindings = {
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
 };
-type Variables = { user: { id: number; login: string; avatarUrl: string; authType: string }; token: string };
+type WorkspaceContext = { id: string; name: string; role: 'owner' | 'member' };
+type Variables = { user: { id: number; login: string; avatarUrl: string; authType: string }; token: string; workspace: WorkspaceContext };
 type AppEnv = { Bindings: Bindings; Variables: Variables };
 
 const app = new Hono<AppEnv>();
@@ -30,6 +31,23 @@ function settingsSchema() {
     columns: z.array(z.object({ id: z.string().min(1), name: z.string().min(1).max(40), label: z.string().min(1).max(50), color: z.string().regex(/^#?[0-9a-fA-F]{6}$/) })).min(1).max(10),
     routingRules: z.array(z.object({ id: z.string(), label: z.string().min(1).max(50), repository: z.string().regex(/^[\w.-]+\/[\w.-]+$/) })).max(50)
   });
+}
+
+async function ensureWorkspace(c: Context<AppEnv>, user: { id: number; login: string }): Promise<WorkspaceContext> {
+  const existing = await c.env.DB.prepare(`SELECT workspaces.id, workspaces.name, workspace_members.role
+    FROM users JOIN workspace_members ON workspace_members.workspace_id = users.current_workspace_id AND workspace_members.user_id = users.id
+    JOIN workspaces ON workspaces.id = workspace_members.workspace_id WHERE users.id = ?`)
+    .bind(user.id).first<{ id: string; name: string; role: 'owner' | 'member' }>();
+  if (existing) return existing;
+
+  const workspaceId = crypto.randomUUID();
+  const legacy = await c.env.DB.prepare('SELECT settings FROM users WHERE id = ?').bind(user.id).first<{ settings: string }>();
+  await c.env.DB.batch([
+    c.env.DB.prepare('INSERT INTO workspaces (id, name, owner_id, settings) VALUES (?, ?, ?, ?)').bind(workspaceId, `${user.login}'s workspace`, user.id, legacy?.settings ?? '{}'),
+    c.env.DB.prepare("INSERT INTO workspace_members (workspace_id, user_id, role) VALUES (?, ?, 'owner')").bind(workspaceId, user.id),
+    c.env.DB.prepare('UPDATE users SET current_workspace_id = ? WHERE id = ?').bind(workspaceId, user.id)
+  ]);
+  return { id: workspaceId, name: `${user.login}'s workspace`, role: 'owner' };
 }
 
 async function createSession(c: Context<AppEnv>, user: { id: number; login: string; avatar_url: string }, token: string, authType: 'oauth' | 'pat') {
@@ -54,6 +72,7 @@ app.use('/api/*', async (c, next) => {
   if (!row) return c.json({ error: 'Session expired' }, 401);
   c.set('user', { id: row.id, login: row.login, avatarUrl: row.avatar_url, authType: row.auth_type });
   c.set('token', await decrypt(row.token_ciphertext, row.token_iv, c.env.APP_SECRET));
+  c.set('workspace', await ensureWorkspace(c, { id: row.id, login: row.login }));
   await next();
 });
 
@@ -100,23 +119,100 @@ app.post('/api/auth/logout', async (c) => {
   return c.body(null, 204);
 });
 
-app.get('/api/me', (c) => c.json({ user: c.get('user') }));
+app.get('/api/me', (c) => c.json({ user: c.get('user'), workspace: c.get('workspace') }));
 
 app.get('/api/settings', async (c) => {
-  const row = await c.env.DB.prepare('SELECT settings FROM users WHERE id = ?').bind(c.get('user').id).first<{ settings: string }>();
+  const row = await c.env.DB.prepare('SELECT settings FROM workspaces WHERE id = ?').bind(c.get('workspace').id).first<{ settings: string }>();
   return c.json({ settings: { ...DEFAULT_SETTINGS, ...(row?.settings ? JSON.parse(row.settings) : {}) } });
 });
 
 app.put('/api/settings', zValidator('json', settingsSchema()), async (c) => {
   const settings = c.req.valid('json');
-  await c.env.DB.prepare('UPDATE users SET settings = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(JSON.stringify(settings), c.get('user').id).run();
+  await c.env.DB.prepare('UPDATE workspaces SET settings = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(JSON.stringify(settings), c.get('workspace').id).run();
   return c.json({ settings });
 });
 
 async function loadSettings(c: Context<AppEnv>): Promise<Settings> {
-  const row = await c.env.DB.prepare('SELECT settings FROM users WHERE id = ?').bind(c.get('user').id).first<{ settings: string }>();
+  const row = await c.env.DB.prepare('SELECT settings FROM workspaces WHERE id = ?').bind(c.get('workspace').id).first<{ settings: string }>();
   return { ...DEFAULT_SETTINGS, ...(row?.settings ? JSON.parse(row.settings) : {}) };
 }
+
+app.get('/api/workspaces', async (c) => {
+  const result = await c.env.DB.prepare(`SELECT workspaces.id, workspaces.name, workspace_members.role,
+    (SELECT COUNT(*) FROM workspace_members all_members WHERE all_members.workspace_id = workspaces.id) AS member_count
+    FROM workspace_members JOIN workspaces ON workspaces.id = workspace_members.workspace_id
+    WHERE workspace_members.user_id = ? ORDER BY workspaces.created_at`)
+    .bind(c.get('user').id).all<{ id: string; name: string; role: 'owner' | 'member'; member_count: number }>();
+  return c.json({ workspaces: result.results.map((row) => ({ id: row.id, name: row.name, role: row.role, memberCount: row.member_count })), currentId: c.get('workspace').id });
+});
+
+app.post('/api/workspaces', zValidator('json', z.object({ name: z.string().trim().min(1).max(60) })), async (c) => {
+  const id = crypto.randomUUID(); const user = c.get('user'); const { name } = c.req.valid('json');
+  await c.env.DB.batch([
+    c.env.DB.prepare('INSERT INTO workspaces (id, name, owner_id, settings) VALUES (?, ?, ?, ?)').bind(id, name, user.id, JSON.stringify(DEFAULT_SETTINGS)),
+    c.env.DB.prepare("INSERT INTO workspace_members (workspace_id, user_id, role) VALUES (?, ?, 'owner')").bind(id, user.id),
+    c.env.DB.prepare('UPDATE users SET current_workspace_id = ? WHERE id = ?').bind(id, user.id)
+  ]);
+  return c.json({ workspace: { id, name, role: 'owner', memberCount: 1 } }, 201);
+});
+
+app.post('/api/workspaces/:id/switch', async (c) => {
+  const membership = await c.env.DB.prepare('SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ?').bind(c.req.param('id'), c.get('user').id).first();
+  if (!membership) return c.json({ error: 'このワークスペースには参加していません' }, 403);
+  await c.env.DB.prepare('UPDATE users SET current_workspace_id = ? WHERE id = ?').bind(c.req.param('id'), c.get('user').id).run();
+  return c.json({ ok: true });
+});
+
+app.get('/api/workspace/members', async (c) => {
+  const result = await c.env.DB.prepare(`SELECT users.id, users.login, users.avatar_url, workspace_members.role, workspace_members.joined_at
+    FROM workspace_members JOIN users ON users.id = workspace_members.user_id WHERE workspace_members.workspace_id = ? ORDER BY workspace_members.joined_at`)
+    .bind(c.get('workspace').id).all<{ id: number; login: string; avatar_url: string; role: 'owner' | 'member'; joined_at: string }>();
+  return c.json({ workspace: c.get('workspace'), members: result.results.map((row) => ({ id: row.id, login: row.login, avatarUrl: row.avatar_url, role: row.role, joinedAt: row.joined_at })) });
+});
+
+app.patch('/api/workspace', zValidator('json', z.object({ name: z.string().trim().min(1).max(60) })), async (c) => {
+  if (c.get('workspace').role !== 'owner') return c.json({ error: 'オーナーのみ変更できます' }, 403);
+  await c.env.DB.prepare('UPDATE workspaces SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(c.req.valid('json').name, c.get('workspace').id).run();
+  return c.json({ ok: true });
+});
+
+app.post('/api/workspace/invites', async (c) => {
+  if (c.get('workspace').role !== 'owner') return c.json({ error: 'オーナーのみ招待できます' }, 403);
+  const code = randomToken(18); const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString();
+  await c.env.DB.prepare('INSERT INTO workspace_invites (token_hash, workspace_id, created_by, expires_at) VALUES (?, ?, ?, ?)')
+    .bind(await sha256(code), c.get('workspace').id, c.get('user').id, expiresAt).run();
+  return c.json({ code, expiresAt }, 201);
+});
+
+app.post('/api/workspaces/join', zValidator('json', z.object({ code: z.string().min(10).max(100) })), async (c) => {
+  const hash = await sha256(c.req.valid('json').code.trim());
+  const invite = await c.env.DB.prepare(`DELETE FROM workspace_invites WHERE token_hash = ? AND expires_at > CURRENT_TIMESTAMP
+    RETURNING workspace_id`).bind(hash).first<{ workspace_id: string }>();
+  if (!invite) return c.json({ error: '招待コードが無効か、期限切れです' }, 404);
+  await c.env.DB.batch([
+    c.env.DB.prepare("INSERT OR IGNORE INTO workspace_members (workspace_id, user_id, role) VALUES (?, ?, 'member')").bind(invite.workspace_id, c.get('user').id),
+    c.env.DB.prepare('UPDATE users SET current_workspace_id = ? WHERE id = ?').bind(invite.workspace_id, c.get('user').id)
+  ]);
+  return c.json({ ok: true });
+});
+
+app.delete('/api/workspace/members/:userId', async (c) => {
+  if (c.get('workspace').role !== 'owner') return c.json({ error: 'オーナーのみメンバーを削除できます' }, 403);
+  const userId = Number(c.req.param('userId'));
+  if (!Number.isSafeInteger(userId) || userId === c.get('user').id) return c.json({ error: 'オーナー自身は削除できません' }, 422);
+  await c.env.DB.prepare('DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND role != ?').bind(c.get('workspace').id, userId, 'owner').run();
+  await c.env.DB.prepare('UPDATE users SET current_workspace_id = NULL WHERE id = ? AND current_workspace_id = ?').bind(userId, c.get('workspace').id).run();
+  return c.body(null, 204);
+});
+
+app.post('/api/workspace/leave', async (c) => {
+  if (c.get('workspace').role === 'owner') return c.json({ error: 'オーナーはワークスペースから退出できません' }, 422);
+  await c.env.DB.batch([
+    c.env.DB.prepare('DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?').bind(c.get('workspace').id, c.get('user').id),
+    c.env.DB.prepare('UPDATE users SET current_workspace_id = NULL WHERE id = ?').bind(c.get('user').id)
+  ]);
+  return c.body(null, 204);
+});
 
 app.get('/api/issues', async (c) => {
   const settings = await loadSettings(c);

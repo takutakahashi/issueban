@@ -1,6 +1,8 @@
 export type Column = { id: string; name: string; label: string; color: string };
 export type RoutingRule = { id: string; label: string; repository: string };
 export type Settings = { repositories: string[]; columns: Column[]; routingRules: RoutingRule[] };
+export type Workspace = { id: string; name: string; role: 'owner' | 'member'; memberCount: number };
+export type WorkspaceMember = { id: number; login: string; avatarUrl: string; role: 'owner' | 'member'; joinedAt: string };
 
 export type Issue = {
   id: number;
