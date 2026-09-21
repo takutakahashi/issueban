@@ -1,4 +1,4 @@
-import type { Issue, Settings, Workspace, WorkspaceMember } from '../shared/types';
+import type { Comment, Issue, Settings, Workspace, WorkspaceMember } from '../shared/types';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, { ...init, headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) } });
@@ -16,6 +16,7 @@ export const api = {
   settings: () => request<{ settings: Settings }>('/api/settings'),
   saveSettings: (settings: Settings) => request<{ settings: Settings }>('/api/settings', { method: 'PUT', body: JSON.stringify(settings) }),
   issues: () => request<{ issues: Issue[]; errors: { repository: string; message: string }[] }>('/api/issues'),
+  comments: (issue: Issue) => request<{ comments: Comment[] }>(`/api/issues/${issue.repository}/${issue.number}/comments`),
   createIssue: (input: { title: string; body: string; issuebanLabel: string; columnId: string }) => request('/api/issues', { method: 'POST', body: JSON.stringify(input) }),
   moveIssue: (issue: Issue, columnId: string) => request(`/api/issues/${issue.repository}/${issue.number}/move`, { method: 'PATCH', body: JSON.stringify({ columnId }) }),
   workspaces: () => request<{ workspaces: Workspace[]; currentId: string }>('/api/workspaces'),

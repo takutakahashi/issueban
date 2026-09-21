@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, ArrowUpRight, Check, Copy, Github, LoaderCircle, LogOut, Plus, RefreshCw, Settings as SettingsIcon, Trash2, Users, X } from 'lucide-react';
+import { AlertCircle, ArrowUpRight, Check, Copy, Github, LoaderCircle, LogOut, MessageSquare, Plus, RefreshCw, Settings as SettingsIcon, Trash2, Users, X } from 'lucide-react';
 import { api } from './api';
-import { DEFAULT_SETTINGS, issueColumn, type Issue, type Settings, type Workspace, type WorkspaceMember } from '../shared/types';
+import { commentExcerpt, DEFAULT_SETTINGS, issueColumn, type Comment, type Issue, type Settings, type Workspace, type WorkspaceMember } from '../shared/types';
 
 type User = { login: string; avatarUrl: string; authType: string; workspace: { id: string; name: string; role: 'owner' | 'member' } };
 
@@ -38,17 +38,50 @@ function Login({ onLogin }: { onLogin: () => void }) {
   </main>;
 }
 
-function IssueCard({ issue, settings, currentColumn, onDragStart, onMove }: { issue: Issue; settings: Settings; currentColumn: string; onDragStart: () => void; onMove: (columnId: string) => void }) {
+function IssueCard({ issue, settings, currentColumn, onDragStart, onMove, onOpenComments }: { issue: Issue; settings: Settings; currentColumn: string; onDragStart: () => void; onMove: (columnId: string) => void; onOpenComments: () => void }) {
   return <article className="issue-card" draggable onDragStart={onDragStart}>
     <div className="issue-meta"><span>{issue.repository}</span><span>#{issue.number}</span></div>
     <h3>{issue.title}</h3>
     <div className="labels">{issue.labels.slice(0, 3).map((label) => <span key={label.name} style={{ '--label': `#${label.color}` } as React.CSSProperties}>{label.name}</span>)}</div>
+    {issue.latestComment && <button type="button" className="comment-preview" onClick={onOpenComments} aria-label={`${issue.title}のコメントを表示`}>
+      {issue.latestComment.avatarUrl && <img src={issue.latestComment.avatarUrl} alt="" />}
+      <span className="comment-preview-text"><strong>{issue.latestComment.author}</strong><span>{commentExcerpt(issue.latestComment.body) || '（本文なし）'}</span></span>
+    </button>}
     <footer>
       <div className="avatars">{issue.assignees.slice(0, 3).map((user) => <img key={user.login} src={user.avatarUrl} alt={user.login} title={user.login} />)}</div>
-      <a href={issue.htmlUrl} target="_blank" rel="noreferrer" aria-label="GitHub で開く"><ArrowUpRight size={16} /></a>
+      <div className="card-actions">
+        {issue.commentCount > 0 && <button type="button" className="comment-chip" onClick={onOpenComments} aria-label={`${issue.title}のコメント${issue.commentCount}件を表示`}><MessageSquare size={14} />{issue.commentCount}</button>}
+        <a href={issue.htmlUrl} target="_blank" rel="noreferrer" aria-label="GitHub で開く"><ArrowUpRight size={16} /></a>
+      </div>
     </footer>
     <label className="mobile-status">移動先<select aria-label={`${issue.title}の移動先`} value={currentColumn} onChange={(event) => onMove(event.target.value)}>{settings.columns.map((column) => <option key={column.id} value={column.id}>{column.name}</option>)}</select></label>
   </article>;
+}
+
+function CommentThread({ issue, onClose }: { issue: Issue; onClose: () => void }) {
+  const [comments, setComments] = useState<Comment[] | null>(null); const [error, setError] = useState('');
+  useEffect(() => {
+    let active = true;
+    api.comments(issue).then((data) => { if (active) setComments(data.comments); }).catch((err) => { if (active) { setError(err instanceof Error ? err.message : 'コメントの取得に失敗しました'); setComments([]); } });
+    return () => { active = false; };
+  }, [issue]);
+  return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal comment-modal" onMouseDown={(e) => e.stopPropagation()}>
+    <button className="icon-button close" onClick={onClose} aria-label="閉じる"><X size={20} /></button>
+    <p className="eyebrow">COMMENTS</p><h2>{issue.title}</h2>
+    <p className="comment-issue-meta">{issue.repository} #{issue.number} · <a href={issue.htmlUrl} target="_blank" rel="noreferrer">GitHub で開く</a></p>
+    {issue.body && <article className="comment-item issue-body"><header><strong>説明</strong></header><p>{issue.body}</p></article>}
+    {error && <p className="form-error"><AlertCircle size={14} />{error}</p>}
+    {comments === null ? <p className="comment-loading"><LoaderCircle className="spin" size={16} />コメントを読み込み中…</p> : comments.length === 0 ? <p className="comment-empty">まだコメントはありません。</p> :
+      <div className="comment-list">{comments.map((comment) => <article className="comment-item" key={comment.id}>
+        <header>
+          {comment.avatarUrl && <img src={comment.avatarUrl} alt="" />}
+          <strong>{comment.author}</strong>
+          <time dateTime={comment.createdAt}>{new Date(comment.createdAt).toLocaleString('ja-JP')}</time>
+          <a href={comment.htmlUrl} target="_blank" rel="noreferrer" aria-label="GitHub でこのコメントを開く"><ArrowUpRight size={14} /></a>
+        </header>
+        <p>{comment.body || '（本文なし）'}</p>
+      </article>)}</div>}
+  </section></div>;
 }
 
 function CreateIssue({ settings, initialColumn, onClose, onCreated }: { settings: Settings; initialColumn: string; onClose: () => void; onCreated: () => void }) {
@@ -122,7 +155,7 @@ function TeamModal({ user, onClose }: { user: User; onClose: () => void }) {
 function Board({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS); const [issues, setIssues] = useState<Issue[]>([]); const [errors, setErrors] = useState<string[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]); const [switchingWorkspace, setSwitchingWorkspace] = useState(false);
-  const [loading, setLoading] = useState(true); const [dragging, setDragging] = useState<Issue | null>(null); const [createColumn, setCreateColumn] = useState<string | null>(null); const [showSettings, setShowSettings] = useState(false); const [showTeam, setShowTeam] = useState(false);
+  const [loading, setLoading] = useState(true); const [dragging, setDragging] = useState<Issue | null>(null); const [createColumn, setCreateColumn] = useState<string | null>(null); const [showSettings, setShowSettings] = useState(false); const [showTeam, setShowTeam] = useState(false); const [commentIssue, setCommentIssue] = useState<Issue | null>(null);
   const load = useCallback(async () => { setLoading(true); try { const [s, data, spaces] = await Promise.all([api.settings(), api.issues(), api.workspaces()]); setSettings(s.settings); setIssues(data.issues); setWorkspaces(spaces.workspaces); setErrors(data.errors.map((e) => `${e.repository}: ${e.message}`)); } finally { setLoading(false); } }, []);
   useEffect(() => { void load(); }, [load]);
   const grouped = useMemo(() => Object.fromEntries(settings.columns.map((column) => [column.id, issues.filter((issue) => issueColumn(issue, settings) === column.id)])), [issues, settings]);
@@ -138,10 +171,11 @@ function Board({ user, onLogout }: { user: User; onLogout: () => void }) {
     <main className="board-wrap"><div className="board-heading"><div><p className="eyebrow">WORKSPACE BOARD</p><h1>{user.workspace.name}</h1><p className="board-summary">{issues.length} issues · {settings.repositories.length} repositories</p></div><button className="button primary compact" onClick={() => setCreateColumn(settings.columns[0]?.id ?? '')}><Plus size={18} /><span>Issue を追加</span></button></div>
     {errors.length > 0 && <div className="notice"><AlertCircle size={17} /><div>{errors.map((error) => <p key={error}>{error}</p>)}</div><button onClick={() => setErrors([])}><X size={15} /></button></div>}
     {!loading && settings.repositories.length === 0 ? <section className="empty-state"><div className="empty-icon"><SettingsIcon /></div><h2>最初のリポジトリを接続</h2><p>対象リポジトリとカラムを設定すると、Issue がここに並びます。</p><button className="button primary" onClick={() => setShowSettings(true)}>ボードを設定</button></section> :
-    <div className="board">{settings.columns.map((column) => <section className={`column ${dragging ? 'drag-active' : ''}`} key={column.id} onDragOver={(e) => e.preventDefault()} onDrop={() => void drop(column.id)}><header><div><i style={{ background: `#${column.color}` }} /><h2>{column.name}</h2><span>{grouped[column.id]?.length ?? 0}</span></div><button className="icon-button mini" aria-label={`${column.name}にカードを追加`} onClick={() => setCreateColumn(column.id)}><Plus size={17} /></button></header><div className="card-list">{grouped[column.id]?.map((issue) => <IssueCard key={issue.id} issue={issue} settings={settings} currentColumn={column.id} onDragStart={() => setDragging(issue)} onMove={(columnId) => void move(issue, columnId)} />)}{loading && [1, 2].map((n) => <div className="issue-card skeleton" key={n} />)}<button className="add-card" onClick={() => setCreateColumn(column.id)}><Plus size={15} />カードを追加</button></div></section>)}</div>}</main>
+    <div className="board">{settings.columns.map((column) => <section className={`column ${dragging ? 'drag-active' : ''}`} key={column.id} onDragOver={(e) => e.preventDefault()} onDrop={() => void drop(column.id)}><header><div><i style={{ background: `#${column.color}` }} /><h2>{column.name}</h2><span>{grouped[column.id]?.length ?? 0}</span></div><button className="icon-button mini" aria-label={`${column.name}にカードを追加`} onClick={() => setCreateColumn(column.id)}><Plus size={17} /></button></header><div className="card-list">{grouped[column.id]?.map((issue) => <IssueCard key={issue.id} issue={issue} settings={settings} currentColumn={column.id} onDragStart={() => setDragging(issue)} onMove={(columnId) => void move(issue, columnId)} onOpenComments={() => setCommentIssue(issue)} />)}{loading && [1, 2].map((n) => <div className="issue-card skeleton" key={n} />)}<button className="add-card" onClick={() => setCreateColumn(column.id)}><Plus size={15} />カードを追加</button></div></section>)}</div>}</main>
     {createColumn && <CreateIssue settings={settings} initialColumn={createColumn} onClose={() => setCreateColumn(null)} onCreated={() => { setCreateColumn(null); void load(); }} />}
     {showSettings && <SettingsModal value={settings} onClose={() => setShowSettings(false)} onSave={async (next) => { const result = await api.saveSettings(next); setSettings(result.settings); void load(); }} />}
     {showTeam && <TeamModal user={user} onClose={() => setShowTeam(false)} />}
+    {commentIssue && <CommentThread issue={commentIssue} onClose={() => setCommentIssue(null)} />}
   </div>;
 }
 

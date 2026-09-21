@@ -4,7 +4,7 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { DEFAULT_SETTINGS, resolveRepository, type Settings } from '../shared/types';
 import { decrypt, encrypt, randomToken, sha256 } from './crypto';
-import { ensureLabel, getViewer, github, GitHubError, listIssues } from './github';
+import { ensureLabel, getViewer, github, GitHubError, listComments, listIssues } from './github';
 
 type Bindings = {
   DB: D1Database;
@@ -235,6 +235,14 @@ app.get('/api/issues', async (c) => {
   const issues = settled.flatMap((result) => result.status === 'fulfilled' ? result.value : []);
   const errors = settled.flatMap((result, index) => result.status === 'rejected' ? [{ repository: repos[index], message: result.reason instanceof Error ? result.reason.message : '取得に失敗しました' }] : []);
   return c.json({ issues, errors });
+});
+
+app.get('/api/issues/:owner/:repo/:number/comments', async (c) => {
+  const repository = `${c.req.param('owner')}/${c.req.param('repo')}`;
+  const number = Number(c.req.param('number'));
+  if (!Number.isSafeInteger(number) || number <= 0) return c.json({ error: 'Issue 番号が不正です' }, 422);
+  const comments = await listComments(c.get('token'), repository, number);
+  return c.json({ comments });
 });
 
 app.post('/api/issues', zValidator('json', z.object({ title: z.string().min(1).max(256), body: z.string().max(65536).default(''), issuebanLabel: z.string().max(50).default(''), columnId: z.string().min(1) })), async (c) => {
