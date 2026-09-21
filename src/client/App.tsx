@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, ArrowUpRight, Check, Copy, Github, LoaderCircle, LogOut, MessageSquare, Plus, RefreshCw, Settings as SettingsIcon, Trash2, Users, X } from 'lucide-react';
+import { AlertCircle, ArrowUpRight, Check, Copy, Github, LoaderCircle, LogOut, MessageSquare, Pencil, Plus, RefreshCw, Settings as SettingsIcon, Trash2, Users, X } from 'lucide-react';
 import { api } from './api';
 import { commentExcerpt, DEFAULT_SETTINGS, issueColumn, type Comment, type Issue, type Settings, type Workspace, type WorkspaceMember } from '../shared/types';
 
@@ -58,13 +58,37 @@ function IssueCard({ issue, settings, currentColumn, onDragStart, onMove, onOpen
   </article>;
 }
 
-function CommentThread({ issue, onClose }: { issue: Issue; onClose: () => void }) {
+function CommentThread({ issue, viewerLogin, onClose, onChanged }: { issue: Issue; viewerLogin: string; onClose: () => void; onChanged: () => void }) {
   const [comments, setComments] = useState<Comment[] | null>(null); const [error, setError] = useState('');
+  const [draft, setDraft] = useState(''); const [posting, setPosting] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null); const [editDraft, setEditDraft] = useState(''); const [savingId, setSavingId] = useState<number | null>(null);
   useEffect(() => {
     let active = true;
     api.comments(issue).then((data) => { if (active) setComments(data.comments); }).catch((err) => { if (active) { setError(err instanceof Error ? err.message : 'コメントの取得に失敗しました'); setComments([]); } });
     return () => { active = false; };
   }, [issue]);
+  async function submitComment(e: React.FormEvent) {
+    e.preventDefault();
+    const body = draft.trim();
+    if (!body || posting) return;
+    setPosting(true); setError('');
+    try {
+      const { comment } = await api.createComment(issue, body);
+      setComments((current) => [...(current ?? []), comment]);
+      setDraft(''); onChanged();
+    } catch (err) { setError(err instanceof Error ? err.message : 'コメントの投稿に失敗しました'); } finally { setPosting(false); }
+  }
+  async function submitEdit(e: React.FormEvent, commentId: number) {
+    e.preventDefault();
+    const body = editDraft.trim();
+    if (!body || savingId !== null) return;
+    setSavingId(commentId); setError('');
+    try {
+      const { comment } = await api.updateComment(issue, commentId, body);
+      setComments((current) => current?.map((item) => item.id === commentId ? comment : item) ?? current);
+      setEditingId(null); setEditDraft(''); onChanged();
+    } catch (err) { setError(err instanceof Error ? err.message : 'コメントの更新に失敗しました'); } finally { setSavingId(null); }
+  }
   return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal comment-modal" onMouseDown={(e) => e.stopPropagation()}>
     <button className="icon-button close" onClick={onClose} aria-label="閉じる"><X size={20} /></button>
     <p className="eyebrow">COMMENTS</p><h2>{issue.title}</h2>
@@ -77,10 +101,24 @@ function CommentThread({ issue, onClose }: { issue: Issue; onClose: () => void }
           {comment.avatarUrl && <img src={comment.avatarUrl} alt="" />}
           <strong>{comment.author}</strong>
           <time dateTime={comment.createdAt}>{new Date(comment.createdAt).toLocaleString('ja-JP')}</time>
+          {comment.author === viewerLogin && editingId !== comment.id && <button type="button" className="icon-button mini" aria-label="コメントを編集" title="コメントを編集" onClick={() => { setEditingId(comment.id); setEditDraft(comment.body); }}><Pencil size={13} /></button>}
           <a href={comment.htmlUrl} target="_blank" rel="noreferrer" aria-label="GitHub でこのコメントを開く"><ArrowUpRight size={14} /></a>
         </header>
-        <p>{comment.body || '（本文なし）'}</p>
+        {editingId === comment.id ? <form className="comment-edit" onSubmit={(e) => void submitEdit(e, comment.id)}>
+          <textarea aria-label="コメントを編集" autoFocus value={editDraft} onChange={(e) => setEditDraft(e.target.value)} />
+          <div className="comment-edit-actions">
+            <button type="button" className="text-button" onClick={() => { setEditingId(null); setEditDraft(''); }}>キャンセル</button>
+            <button type="submit" className="button primary compact" disabled={savingId !== null || !editDraft.trim()}>{savingId === comment.id && <LoaderCircle className="spin" size={15} />}保存</button>
+          </div>
+        </form> : <p>{comment.body || '（本文なし）'}</p>}
       </article>)}</div>}
+    <form className="comment-composer" onSubmit={submitComment}>
+      <textarea aria-label="コメントを追加" value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="コメントを入力…（Markdown 対応）" />
+      <div className="comment-composer-actions">
+        <span className="comment-composer-hint">GitHub Issue にコメントとして投稿されます</span>
+        <button type="submit" className="button primary compact" disabled={posting || !draft.trim()}>{posting && <LoaderCircle className="spin" size={15} />}コメントする</button>
+      </div>
+    </form>
   </section></div>;
 }
 
@@ -175,7 +213,7 @@ function Board({ user, onLogout }: { user: User; onLogout: () => void }) {
     {createColumn && <CreateIssue settings={settings} initialColumn={createColumn} onClose={() => setCreateColumn(null)} onCreated={() => { setCreateColumn(null); void load(); }} />}
     {showSettings && <SettingsModal value={settings} onClose={() => setShowSettings(false)} onSave={async (next) => { const result = await api.saveSettings(next); setSettings(result.settings); void load(); }} />}
     {showTeam && <TeamModal user={user} onClose={() => setShowTeam(false)} />}
-    {commentIssue && <CommentThread issue={commentIssue} onClose={() => setCommentIssue(null)} />}
+    {commentIssue && <CommentThread issue={commentIssue} viewerLogin={user.login} onClose={() => setCommentIssue(null)} onChanged={() => void load()} />}
   </div>;
 }
 

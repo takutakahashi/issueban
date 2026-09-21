@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { listComments, listIssues } from './github';
+import { createComment, listComments, listIssues, updateComment } from './github';
 
 function jsonResponse(data: unknown): Response {
   return new Response(JSON.stringify(data), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -65,5 +65,44 @@ describe('listComments', () => {
       { id: 1, author: 'octocat', avatarUrl: 'https://avatars.example/octocat', body: '一つ目', createdAt: '2026-01-01T00:00:00Z', htmlUrl: 'https://github.com/acme/api/issues/7#issuecomment-1' },
       { id: 2, author: 'ghost', avatarUrl: '', body: '', createdAt: '2026-01-02T00:00:00Z', htmlUrl: 'https://github.com/acme/api/issues/7#issuecomment-2' }
     ]);
+  });
+});
+
+const postedComment = {
+  id: 12, body: '新規コメント', html_url: 'https://github.com/acme/api/issues/7#issuecomment-12', created_at: '2026-01-03T00:00:00Z',
+  user: { id: 5, login: 'octocat', avatar_url: 'https://avatars.example/octocat' }
+};
+
+function stubFetchWithInit(handler: (url: string, init?: RequestInit) => Response): { calls: { url: string; init?: RequestInit }[] } {
+  const calls: { url: string; init?: RequestInit }[] = [];
+  globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: RequestInit) => { calls.push({ url: String(input), init }); return Promise.resolve(handler(String(input), init)); }) as typeof fetch;
+  return { calls };
+}
+
+describe('createComment', () => {
+  it('posts the body to the issue comments endpoint and maps the created comment', async () => {
+    const { calls } = stubFetchWithInit(() => jsonResponse(postedComment));
+
+    const comment = await createComment('token', 'acme/api', 7, '新規コメント');
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe('https://api.github.com/repos/acme/api/issues/7/comments');
+    expect(calls[0].init?.method).toBe('POST');
+    expect(calls[0].init?.body).toBe(JSON.stringify({ body: '新規コメント' }));
+    expect(comment).toEqual({ id: 12, author: 'octocat', avatarUrl: 'https://avatars.example/octocat', body: '新規コメント', createdAt: '2026-01-03T00:00:00Z', htmlUrl: 'https://github.com/acme/api/issues/7#issuecomment-12' });
+  });
+});
+
+describe('updateComment', () => {
+  it('patches the comment endpoint and maps the updated comment', async () => {
+    const { calls } = stubFetchWithInit(() => jsonResponse({ ...postedComment, body: '編集後の本文' }));
+
+    const comment = await updateComment('token', 'acme/api', 12, '編集後の本文');
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe('https://api.github.com/repos/acme/api/issues/comments/12');
+    expect(calls[0].init?.method).toBe('PATCH');
+    expect(calls[0].init?.body).toBe(JSON.stringify({ body: '編集後の本文' }));
+    expect(comment).toMatchObject({ id: 12, author: 'octocat', body: '編集後の本文' });
   });
 });

@@ -130,6 +130,11 @@ textarea { resize: vertical; min-height: 96px; }
 .comment-item header a { display: grid; place-items: center; color: #9aa2af; }
 .comment-item p { margin: 0; color: #394457; font-size: 12px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
 .comment-loading, .comment-empty { display: flex; align-items: center; gap: 8px; margin: 20px 0 0; color: var(--muted); font-size: 12px; }
+.comment-item header .icon-button.mini { width: 24px; height: 24px; }
+.comment-edit { display: grid; gap: 8px; }.comment-edit textarea { min-height: 90px; resize: vertical; }
+.comment-edit-actions, .comment-composer-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.comment-composer { display: grid; gap: 10px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }.comment-composer textarea { min-height: 96px; resize: vertical; }
+.comment-composer-hint { flex: 1; color: #8992a2; font-size: 10px; font-weight: 400; }
 .workspace-current { display: flex; align-items: center; justify-content: space-between; background: #111827; color: white; padding: 16px 18px; border-radius: 10px; margin: 24px 0; }
 .workspace-current div { display: grid; gap: 4px; }.workspace-current small { color: #9ca7b7; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }.workspace-current strong { font: 700 16px 'Manrope'; }
 .role-badge { background: #ff6b35; color: white; border-radius: 20px; padding: 4px 9px; font-size: 10px; font-weight: 700; text-transform: uppercase; }
