@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { listComments, listIssues } from './github';
+import { createComment, listComments, listIssues, updateComment } from './github';
 
 function jsonResponse(data: unknown): Response {
   return new Response(JSON.stringify(data), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -7,8 +7,8 @@ function jsonResponse(data: unknown): Response {
 
 const originalFetch = globalThis.fetch;
 
-function stubFetch(handler: (url: string) => Response | Promise<Response>): void {
-  globalThis.fetch = ((input: Parameters<typeof fetch>[0]) => Promise.resolve(handler(String(input)))) as typeof fetch;
+function stubFetch(handler: (url: string, init?: RequestInit) => Response | Promise<Response>): void {
+  globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: RequestInit) => Promise.resolve(handler(String(input), init))) as typeof fetch;
 }
 
 afterEach(() => { globalThis.fetch = originalFetch; });
@@ -65,5 +65,44 @@ describe('listComments', () => {
       { id: 1, author: 'octocat', avatarUrl: 'https://avatars.example/octocat', body: '一つ目', createdAt: '2026-01-01T00:00:00Z', htmlUrl: 'https://github.com/acme/api/issues/7#issuecomment-1' },
       { id: 2, author: 'ghost', avatarUrl: '', body: '', createdAt: '2026-01-02T00:00:00Z', htmlUrl: 'https://github.com/acme/api/issues/7#issuecomment-2' }
     ]);
+  });
+});
+
+describe('issue comments', () => {
+  it('creates a comment through the GitHub issues comments API', async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    stubFetch((url, init) => {
+      calls.push({ url, init });
+      return jsonResponse({ id: 10, body: '新しいコメント', html_url: 'https://github.com/acme/api/issues/7#issuecomment-10', created_at: '2026-01-03T00:00:00Z', user: { id: 5, login: 'octocat', avatar_url: 'https://avatars.example/octocat' } });
+    });
+
+    const comment = await createComment('token', 'acme/api', 7, '新しいコメント');
+
+    expect(comment).toEqual({
+      id: 10,
+      author: 'octocat',
+      avatarUrl: 'https://avatars.example/octocat',
+      body: '新しいコメント',
+      createdAt: '2026-01-03T00:00:00Z',
+      htmlUrl: 'https://github.com/acme/api/issues/7#issuecomment-10'
+    });
+    expect(calls[0]?.url).toBe('https://api.github.com/repos/acme/api/issues/7/comments');
+    expect(calls[0]?.init?.method).toBe('POST');
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ body: '新しいコメント' });
+  });
+
+  it('updates a comment through the GitHub issues comments API', async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    stubFetch((url, init) => {
+      calls.push({ url, init });
+      return jsonResponse({ id: 10, body: '編集済み', html_url: 'https://github.com/acme/api/issues/7#issuecomment-10', created_at: '2026-01-03T00:00:00Z', user: { id: 5, login: 'octocat', avatar_url: 'https://avatars.example/octocat' } });
+    });
+
+    const comment = await updateComment('token', 'acme/api', 7, 10, '編集済み');
+
+    expect(comment.body).toBe('編集済み');
+    expect(calls[0]?.url).toBe('https://api.github.com/repos/acme/api/issues/7/comments/10');
+    expect(calls[0]?.init?.method).toBe('PATCH');
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ body: '編集済み' });
   });
 });

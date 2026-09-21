@@ -60,6 +60,22 @@ export async function listComments(
   return data.map(toComment);
 }
 
+export async function createComment(token: string, repository: string, number: number, body: string): Promise<Comment> {
+  const comment = await github<GitHubComment>(token, `/repos/${repository}/issues/${number}/comments`, {
+    method: 'POST',
+    body: JSON.stringify({ body })
+  });
+  return toComment(comment);
+}
+
+export async function updateComment(token: string, repository: string, number: number, commentId: number, body: string): Promise<Comment> {
+  const comment = await github<GitHubComment>(token, `/repos/${repository}/issues/${number}/comments/${commentId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ body })
+  });
+  return toComment(comment);
+}
+
 async function latestComment(token: string, repository: string, number: number, commentCount: number): Promise<Comment | null> {
   if (commentCount <= 0) return null;
   const comments = await listComments(token, repository, number, { perPage: 1, page: commentCount });
