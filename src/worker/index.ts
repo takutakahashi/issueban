@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { DEFAULT_SETTINGS, resolveRepository, type Settings } from '../shared/types';
 import { decrypt, encrypt, randomToken, sha256 } from './crypto';
 import { createComment, ensureLabel, getViewer, github, GitHubError, listComments, listIssues, updateComment } from './github';
+import { handleMcpRequest } from './mcp';
 
 type Bindings = {
   DB: D1Database;
@@ -288,6 +289,27 @@ app.patch('/api/issues/:owner/:repo/:number/move', zValidator('json', z.object({
   await ensureLabel(c.get('token'), repository, column.label, column.color);
   await github(c.get('token'), `/repos/${repository}/issues/${number}`, { method: 'PATCH', body: JSON.stringify({ labels }) });
   return c.json({ ok: true });
+});
+
+app.on(['OPTIONS', 'GET', 'DELETE', 'POST'], '/mcp', async (c) => {
+  if (c.req.method !== 'POST') return handleMcpRequest(c.req.raw, '');
+
+  const authorization = c.req.header('Authorization');
+  if (!authorization?.startsWith('Bearer ')) {
+    return c.json({ error: 'Authorization Bearer token required' }, 401, { 'WWW-Authenticate': 'Bearer' });
+  }
+  const token = authorization.slice('Bearer '.length).trim();
+  if (!token) return c.json({ error: 'GitHub token required' }, 401, { 'WWW-Authenticate': 'Bearer' });
+
+  try {
+    await getViewer(token);
+  } catch (error) {
+    if (error instanceof GitHubError && error.status === 401) {
+      return c.json({ error: 'Invalid GitHub token' }, 401, { 'WWW-Authenticate': 'Bearer' });
+    }
+    return c.json({ error: 'GitHub token verification failed' }, 502);
+  }
+  return handleMcpRequest(c.req.raw, token);
 });
 
 app.onError((error, c) => {

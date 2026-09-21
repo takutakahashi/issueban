@@ -43,6 +43,31 @@ npx wrangler secret put GITHUB_CLIENT_ID
 npx wrangler secret put GITHUB_CLIENT_SECRET
 ```
 
+## Remote MCP server
+
+`/mcp` はリモート MCP（Streamable HTTP）エンドポイントです。`Authorization: Bearer` に GitHub Personal Access Token を指定すると、そのトークンで GitHub API を呼び出します。認証時には `/user` でトークンを検証します。
+
+対応ツール（Issueban ボード操作）:
+
+- `issueban_get_authenticated_user` — Bearer トークンの GitHub ユーザー確認
+- `issueban_list_board` — 設定したリポジトリのカードをカラムごとに一覧
+- `issueban_move_card` — カードを別カラムへ移動（GitHub ラベルを更新）
+- `issueban_create_card` — 新規カードを作成（GitHub Issue を作成し、カラムラベルを付与）
+
+ボードツールは `settings`（`repositories` と `columns`）を引数として受け取ります。MCP サーバーはセッションレスのため、呼び出しごとにボード設定を指定してください。
+
+動作確認:
+
+```bash
+curl -s http://localhost:5173/mcp \
+  -H 'Authorization: Bearer $GITHUB_TOKEN' \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+MCP クライアントには `https://<デプロイ先>/mcp` を指定し、認証には GitHub PAT を Bearer トークンとして設定してください。トークンはこのサーバーに保存せず、リクエストごとにのみ使用します。
+
 ## Deploy
 
 1. Cloudflare にログインし、D1 を作成します。
