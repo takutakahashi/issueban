@@ -400,6 +400,18 @@ app.delete('/api/cards/:id', async (c) => {
   return c.body(null, 204);
 });
 
+app.patch('/api/cards/:id', zValidator('json', z.object({ body: z.string().max(65536) })), async (c) => {
+  const cardId = Number(c.req.param('id'));
+  if (!Number.isSafeInteger(cardId) || cardId >= 0) return c.json({ error: 'カードの指定が不正です' }, 422);
+  const workspaceCardId = -cardId;
+  const settings = await loadSettings(c);
+  const updated = await c.env.DB.prepare(`UPDATE workspace_cards SET body = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND workspace_id = ? RETURNING id, column_id, title, body, issueban_label, created_at, updated_at`)
+    .bind(c.req.valid('json').body, workspaceCardId, c.get('workspace').id).first<WorkspaceCardRow>();
+  if (!updated) return c.json({ error: 'カードが見つかりません' }, 404);
+  return c.json({ issue: localIssueFromCard(updated, settings) });
+});
+
 app.patch('/api/issues/:owner/:repo/:number/move', zValidator('json', z.object({ columnId: z.string().min(1) })), async (c) => {
   const repository = `${c.req.param('owner')}/${c.req.param('repo')}`; const number = c.req.param('number');
   const settings = await loadSettings(c); const column = settings.columns.find((item) => item.id === c.req.valid('json').columnId);

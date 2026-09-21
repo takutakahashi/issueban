@@ -120,6 +120,7 @@ textarea { resize: vertical; min-height: 96px; }
 .rule-edit { display: grid; grid-template-columns: 1fr 20px 1.3fr 34px; align-items: center; gap: 6px; }.rule-edit > span { text-align: center; color: #9ca3af; }
 .team-modal { width: min(620px, 100%); }
 .comment-modal { width: min(620px, 100%); }
+.description-modal { width: min(560px, 100%); }
 .comment-issue-meta { margin: 6px 0 0; color: var(--muted); font-size: 11px; }
 .comment-issue-meta a { color: var(--orange); font-weight: 700; text-decoration: none; }
 .comment-list { display: grid; gap: 10px; margin-top: 18px; }

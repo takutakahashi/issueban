@@ -24,6 +24,7 @@ export const api = {
   moveIssue: (issue: Issue, columnId: string) => request(`/api/issues/${issue.repository}/${issue.number}/move`, { method: 'PATCH', body: JSON.stringify({ columnId }) }),
   moveCard: (issue: Issue, columnId: string) => request(`/api/cards/${issue.id}/move`, { method: 'PATCH', body: JSON.stringify({ columnId }) }),
   deleteCard: (issue: Issue) => request(`/api/cards/${issue.id}`, { method: 'DELETE' }),
+  updateCard: (issue: Issue, body: string) => request<{ issue: Issue }>(`/api/cards/${issue.id}`, { method: 'PATCH', body: JSON.stringify({ body }) }),
   plan: (issue: Issue) => request<{ plan: Plan | null }>(`/api/issues/${issue.repository}/${issue.number}/plan`),
   savePlan: (issue: Issue, body: string) => request<{ plan: Plan }>(`/api/issues/${issue.repository}/${issue.number}/plan`, { method: 'PUT', body: JSON.stringify({ body }) }),
   applyPlan: (issue: Issue, items: PlanApplyItem[]) => request<PlanApplyResult>(`/api/issues/${issue.repository}/${issue.number}/plan/apply`, { method: 'POST', body: JSON.stringify({ items }) }),
