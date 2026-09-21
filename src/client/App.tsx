@@ -330,7 +330,15 @@ function Board({ user, onLogout }: { user: User; onLogout: () => void }) {
     const target = settings.columns.find((column) => column.id === columnId); if (!target) return;
     const previous = issues;
     setIssues(issues.map((item) => item.id === issue.id ? { ...item, labels: [...item.labels.filter((label) => !settings.columns.some((col) => col.label.toLowerCase() === label.name.toLowerCase())), { name: target.label, color: target.color }] } : item));
-    try { await (issue.localOnly ? api.moveCard(issue, columnId) : api.moveIssue(issue, columnId)); await load(); }
+    try {
+      if (issue.localOnly) {
+        const result = await api.moveCard(issue, columnId);
+        setIssues((current) => current.map((item) => item.id === issue.id ? result.issue : item));
+      } else {
+        await api.moveIssue(issue, columnId);
+      }
+      await load();
+    }
     catch (error) { setIssues(previous); setErrors([error instanceof Error ? error.message : '移動に失敗しました']); }
     setDragging(null);
   }

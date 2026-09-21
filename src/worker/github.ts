@@ -52,6 +52,22 @@ function toComment(comment: GitHubComment): Comment {
   };
 }
 
+export function toIssue(item: GitHubIssue, repository: string): Issue {
+  return {
+    id: item.id,
+    number: item.number,
+    title: item.title,
+    body: item.body,
+    htmlUrl: item.html_url,
+    repository,
+    labels: item.labels.map((label) => typeof label === 'string' ? { name: label, color: '6b7280' } : { name: label.name ?? '', color: label.color ?? '6b7280' }),
+    assignees: item.assignees.map((user) => ({ login: user.login, avatarUrl: user.avatar_url })),
+    commentCount: item.comments,
+    latestComment: null,
+    updatedAt: item.updated_at
+  };
+}
+
 export async function listComments(
   token: string,
   repository: string,
@@ -109,19 +125,7 @@ async function eachWithConcurrency<T>(items: T[], concurrency: number, worker: (
 
 export async function listIssues(token: string, repository: string): Promise<Issue[]> {
   const data = await github<GitHubIssue[]>(token, `/repos/${repository}/issues?state=open&per_page=100&sort=updated`);
-  const issues = data.filter((item) => !item.pull_request).map<Issue>((item) => ({
-    id: item.id,
-    number: item.number,
-    title: item.title,
-    body: item.body,
-    htmlUrl: item.html_url,
-    repository,
-    labels: item.labels.map((label) => typeof label === 'string' ? { name: label, color: '6b7280' } : { name: label.name ?? '', color: label.color ?? '6b7280' }),
-    assignees: item.assignees.map((user) => ({ login: user.login, avatarUrl: user.avatar_url })),
-    commentCount: item.comments,
-    latestComment: null,
-    updatedAt: item.updated_at
-  }));
+  const issues = data.filter((item) => !item.pull_request).map((item) => toIssue(item, repository));
   const preview = issues.filter((issue) => issue.commentCount > 0).slice(0, COMMENT_PREVIEW_LIMIT);
   await eachWithConcurrency(preview, COMMENT_FETCH_CONCURRENCY, async (issue) => {
     issue.latestComment = await latestComment(token, repository, issue.number, issue.commentCount).catch(() => null);
