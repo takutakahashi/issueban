@@ -1,7 +1,7 @@
 import type { Comment, Issue } from '../shared/types';
 
 type GitHubUser = { id: number; login: string; avatar_url: string };
-type GitHubIssue = {
+export type GitHubIssue = {
   id: number; number: number; title: string; body: string | null; html_url: string; updated_at: string;
   comments: number;
   pull_request?: unknown;
@@ -37,6 +37,10 @@ export async function github<T>(token: string, path: string, init: RequestInit =
 
 export const getViewer = (token: string) => github<GitHubUser>(token, '/user');
 
+export async function getIssue(token: string, repository: string, number: number): Promise<GitHubIssue> {
+  return github<GitHubIssue>(token, `/repos/${repository}/issues/${number}`);
+}
+
 function toComment(comment: GitHubComment): Comment {
   return {
     id: comment.id,
@@ -58,6 +62,16 @@ export async function listComments(
   const page = options.page ?? 1;
   const data = await github<GitHubComment[]>(token, `/repos/${repository}/issues/${number}/comments?per_page=${perPage}&page=${page}`);
   return data.map(toComment);
+}
+
+export async function listAllComments(token: string, repository: string, number: number): Promise<Comment[]> {
+  const comments: Comment[] = [];
+  for (let page = 1; page <= 10; page += 1) {
+    const items = await listComments(token, repository, number, { perPage: 100, page });
+    comments.push(...items);
+    if (items.length < 100) break;
+  }
+  return comments;
 }
 
 export async function createComment(token: string, repository: string, number: number, body: string): Promise<Comment> {

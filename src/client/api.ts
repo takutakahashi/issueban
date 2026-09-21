@@ -1,3 +1,4 @@
+import type { Plan, PlanApplyItem, PlanApplyResult } from '../shared/plan';
 import type { Comment, Issue, Settings, Workspace, WorkspaceMember } from '../shared/types';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -21,6 +22,9 @@ export const api = {
   updateComment: (issue: Issue, commentId: number, body: string) => request<{ comment: Comment }>(`/api/issues/${issue.repository}/${issue.number}/comments/${commentId}`, { method: 'PATCH', body: JSON.stringify({ body }) }),
   createIssue: (input: { title: string; body: string; issuebanLabel: string; columnId: string }) => request('/api/issues', { method: 'POST', body: JSON.stringify(input) }),
   moveIssue: (issue: Issue, columnId: string) => request(`/api/issues/${issue.repository}/${issue.number}/move`, { method: 'PATCH', body: JSON.stringify({ columnId }) }),
+  plan: (issue: Issue) => request<{ plan: Plan | null }>(`/api/issues/${issue.repository}/${issue.number}/plan`),
+  savePlan: (issue: Issue, body: string) => request<{ plan: Plan }>(`/api/issues/${issue.repository}/${issue.number}/plan`, { method: 'PUT', body: JSON.stringify({ body }) }),
+  applyPlan: (issue: Issue, items: PlanApplyItem[]) => request<PlanApplyResult>(`/api/issues/${issue.repository}/${issue.number}/plan/apply`, { method: 'POST', body: JSON.stringify({ items }) }),
   workspaces: () => request<{ workspaces: Workspace[]; currentId: string }>('/api/workspaces'),
   members: () => request<{ workspace: { id: string; name: string; role: 'owner' | 'member' }; members: WorkspaceMember[] }>('/api/workspace/members'),
   createWorkspace: (name: string) => request('/api/workspaces', { method: 'POST', body: JSON.stringify({ name }) }),
