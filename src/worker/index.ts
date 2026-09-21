@@ -292,7 +292,7 @@ app.patch('/api/issues/:owner/:repo/:number/move', zValidator('json', z.object({
 });
 
 app.on(['OPTIONS', 'GET', 'DELETE', 'POST'], '/mcp', async (c) => {
-  if (c.req.method !== 'POST') return handleMcpRequest(c.req.raw, '');
+  if (c.req.method !== 'POST') return handleMcpRequest(c.req.raw, '', null);
 
   const authorization = c.req.header('Authorization');
   if (!authorization?.startsWith('Bearer ')) {
@@ -302,14 +302,18 @@ app.on(['OPTIONS', 'GET', 'DELETE', 'POST'], '/mcp', async (c) => {
   if (!token) return c.json({ error: 'GitHub token required' }, 401, { 'WWW-Authenticate': 'Bearer' });
 
   try {
-    await getViewer(token);
+    const viewer = await getViewer(token);
+    const settings = await c.env.DB.prepare(`SELECT workspaces.settings
+      FROM users JOIN workspaces ON workspaces.id = users.current_workspace_id WHERE users.id = ?`)
+      .bind(viewer.id).first<{ settings: string }>();
+    const workspaceSettings = settings?.settings ? { ...DEFAULT_SETTINGS, ...JSON.parse(settings.settings) } as Settings : null;
+    return handleMcpRequest(c.req.raw, token, workspaceSettings);
   } catch (error) {
     if (error instanceof GitHubError && error.status === 401) {
       return c.json({ error: 'Invalid GitHub token' }, 401, { 'WWW-Authenticate': 'Bearer' });
     }
     return c.json({ error: 'GitHub token verification failed' }, 502);
   }
-  return handleMcpRequest(c.req.raw, token);
 });
 
 app.onError((error, c) => {

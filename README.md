@@ -54,7 +54,7 @@ npx wrangler secret put GITHUB_CLIENT_SECRET
 - `issueban_move_card` — カードを別カラムへ移動（GitHub ラベルを更新）
 - `issueban_create_card` — 新規カードを作成（GitHub Issue を作成し、カラムラベルを付与）
 
-ボードツールは `settings`（`repositories` と `columns`）を引数として受け取ります。MCP サーバーはセッションレスのため、呼び出しごとにボード設定を指定してください。
+ボード設定（`repositories`、`columns`、`routingRules`）は Bearer トークンの GitHub ユーザー ID に紐づく Issueban ワークスペースから自動的に読み込まれます。ツール引数で設定を指定する必要はありません。
 
 動作確認:
 

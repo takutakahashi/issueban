@@ -24,22 +24,26 @@ type JsonRpcResponse = {
   error?: { code: number; message: string };
 };
 
+const testSettings = {
+  repositories: ['acme/api'],
+  columns: [
+    { id: 'backlog', name: 'Backlog', label: 'status: backlog', color: '6b7280' },
+    { id: 'progress', name: 'In progress', label: 'status: in progress', color: 'f59e0b' }
+  ],
+  routingRules: []
+};
+
 function postMcp(payload: unknown): Promise<Response> {
   return handleMcpRequest(new Request('https://issueban.example/mcp', {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
     body: JSON.stringify(payload)
-  }), 'github-token');
+  }), 'github-token', testSettings);
 }
-
-const columns = [
-  { id: 'backlog', label: 'status: backlog', color: '6b7280' },
-  { id: 'progress', label: 'status: in progress', color: 'f59e0b' }
-];
 
 describe('remote MCP server', () => {
   it('rejects unsupported HTTP methods for the streamable HTTP transport', async () => {
-    const get = await handleMcpRequest(new Request('https://issueban.example/mcp'), '');
+    const get = await handleMcpRequest(new Request('https://issueban.example/mcp'), '', null);
     expect(get.status).toBe(405);
     expect(await get.text()).toContain('Server-initiated SSE streams are not supported');
   });
@@ -78,7 +82,7 @@ describe('remote MCP server', () => {
 
     const response = await postMcp({
       jsonrpc: '2.0', id: 3, method: 'tools/call',
-      params: { name: 'issueban_list_board', arguments: { repositories: ['acme/api'], columns: [{ id: 'backlog', label: 'status: backlog' }, { id: 'progress', label: 'status: in progress' }] } }
+      params: { name: 'issueban_list_board', arguments: {} }
     });
     const body = await response.json() as JsonRpcResponse;
 
@@ -101,7 +105,7 @@ describe('remote MCP server', () => {
 
     const response = await postMcp({
       jsonrpc: '2.0', id: 4, method: 'tools/call',
-      params: { name: 'issueban_move_card', arguments: { repository: 'acme/api', cardNumber: 7, targetColumnId: 'backlog', columns } }
+      params: { name: 'issueban_move_card', arguments: { repository: 'acme/api', cardNumber: 7, targetColumnId: 'backlog' } }
     });
     const body = await response.json() as JsonRpcResponse;
     const patch = calls.find((call) => call.init?.method === 'PATCH');
@@ -123,7 +127,7 @@ describe('remote MCP server', () => {
 
     const response = await postMcp({
       jsonrpc: '2.0', id: 5, method: 'tools/call',
-      params: { name: 'issueban_create_card', arguments: { repository: 'acme/api', columnId: 'backlog', title: '新しいカード', body: '説明', issuebanLabel: 'issueban: urgent', columns } }
+      params: { name: 'issueban_create_card', arguments: { repository: 'acme/api', columnId: 'backlog', title: '新しいカード', body: '説明', issuebanLabel: 'issueban: urgent' } }
     });
     const body = await response.json() as JsonRpcResponse;
     const create = calls.find((call) => call.init?.method === 'POST' && String(call.url).includes('/repos/acme/api/issues') && !String(call.url).includes('/labels'));
@@ -136,11 +140,11 @@ describe('remote MCP server', () => {
   it('returns invalid-parameter errors as tool results', async () => {
     const response = await postMcp({
       jsonrpc: '2.0', id: 6, method: 'tools/call',
-      params: { name: 'issueban_list_board', arguments: { repositories: [], columns: [] } }
+      params: { name: 'issueban_move_card', arguments: { repository: 'acme/api', cardNumber: 7, targetColumnId: 'nonexistent' } }
     });
     const body = await response.json() as JsonRpcResponse;
 
     expect(body.result?.isError).toBe(true);
-    expect(body.result?.content?.[0].text).toContain('repositories');
+    expect(body.result?.content?.[0].text).toContain('Column not found');
   });
 });

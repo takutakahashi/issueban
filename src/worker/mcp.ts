@@ -1,12 +1,13 @@
 import * as z from 'zod/v4';
 import { ensureLabel, getViewer, GitHubError, listIssues, github } from './github';
+import { resolveRepository, type Settings } from '../shared/types';
 
 const MCP_PROTOCOL_VERSION = '2025-06-18';
 const SUPPORTED_PROTOCOL_VERSIONS = new Set(['2025-03-26', MCP_PROTOCOL_VERSION]);
 
 type JsonRpcId = string | number | null;
 type JsonRpcRequest = { jsonrpc: '2.0'; id?: JsonRpcId; method: string; params?: unknown };
-type ToolHandler = (token: string, params: Record<string, unknown>) => Promise<unknown>;
+type ToolHandler = (token: string, params: Record<string, unknown>, settings: Settings) => Promise<unknown>;
 type ToolDefinition = {
   name: string;
   description: string;
@@ -26,32 +27,19 @@ type BoardCard = {
 };
 
 const repositorySchema = z.string().regex(/^[\w.-]+\/[\w.-]+$/);
-const boardColumnSchema = z.object({ id: z.string().min(1), label: z.string().min(1).max(50) });
-const fullColumnSchema = z.object({
-  id: z.string().min(1),
-  label: z.string().min(1).max(50),
-  color: z.string().regex(/^#?[0-9a-fA-F]{6}$/)
-});
-
-const listBoardSchema = z.object({
-  repositories: z.array(repositorySchema).min(1).max(25),
-  columns: z.array(boardColumnSchema).min(1).max(10)
-});
 
 const moveCardSchema = z.object({
   repository: repositorySchema,
   cardNumber: z.number().int().min(1),
-  targetColumnId: z.string().min(1),
-  columns: z.array(fullColumnSchema).min(1).max(10)
+  targetColumnId: z.string().min(1)
 });
 
 const createCardSchema = z.object({
-  repository: repositorySchema,
+  repository: repositorySchema.optional(),
   columnId: z.string().min(1),
   title: z.string().min(1).max(256),
   body: z.string().max(65536).optional(),
-  issuebanLabel: z.string().max(50).optional(),
-  columns: z.array(fullColumnSchema).min(1).max(10)
+  issuebanLabel: z.string().max(50).optional()
 });
 
 function resolveColumnId(issueLabels: string[], columns: { id: string; label: string }[]): string {
@@ -78,24 +66,8 @@ const tools: ToolDefinition[] = [
   {
     name: 'issueban_list_board',
     description: 'List all cards on the Issueban board across configured repositories, with column assignments.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        repositories: { type: 'array', items: { type: 'string', pattern: '^[\\w.-]+/[\\w.-]+$' }, minItems: 1, maxItems: 25 },
-        columns: {
-          type: 'array', minItems: 1, maxItems: 10,
-          items: {
-            type: 'object',
-            properties: { id: { type: 'string', minLength: 1 }, label: { type: 'string', minLength: 1, maxLength: 50 } },
-            required: ['id', 'label']
-          }
-        }
-      },
-      required: ['repositories', 'columns'],
-      additionalProperties: false
-    },
-    run: async (token, params) => {
-      const settings = parseArgs(listBoardSchema, params) as { repositories: string[]; columns: { id: string; label: string }[] };
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    run: async (token, _params, settings) => {
       const cards: BoardCard[] = [];
       for (const repository of settings.repositories) {
         const issues = await listIssues(token, repository);
@@ -124,31 +96,17 @@ const tools: ToolDefinition[] = [
         repository: { type: 'string', pattern: '^[\\w.-]+/[\\w.-]+$' },
         cardNumber: { type: 'integer', minimum: 1 },
         targetColumnId: { type: 'string', minLength: 1 },
-        columns: {
-          type: 'array', minItems: 1, maxItems: 10,
-          items: {
-            type: 'object',
-            properties: {
-              id: { type: 'string', minLength: 1 },
-              label: { type: 'string', minLength: 1, maxLength: 50 },
-              color: { type: 'string', pattern: '^#?[0-9a-fA-F]{6}$' }
-            },
-            required: ['id', 'label', 'color']
-          }
-        }
       },
-      required: ['repository', 'cardNumber', 'targetColumnId', 'columns'],
+      required: ['repository', 'cardNumber', 'targetColumnId'],
       additionalProperties: false
     },
-    run: async (token, params) => {
-      const args = parseArgs(moveCardSchema, params) as {
-        repository: string; cardNumber: number; targetColumnId: string; columns: { id: string; label: string; color: string }[];
-      };
-      const targetColumn = args.columns.find((column) => column.id === args.targetColumnId);
+    run: async (token, params, settings) => {
+      const args = parseArgs(moveCardSchema, params) as { repository: string; cardNumber: number; targetColumnId: string };
+      const targetColumn = settings.columns.find((column) => column.id === args.targetColumnId);
       if (!targetColumn) throw new Error(`Column not found: ${args.targetColumnId}`);
 
       const issue = await github<{ labels: ({ name?: string } | string)[] }>(token, `/repos/${args.repository}/issues/${args.cardNumber}`);
-      const statusLabels = new Set(args.columns.map((column) => column.label.toLowerCase()));
+      const statusLabels = new Set(settings.columns.map((column) => column.label.toLowerCase()));
       const labels = issue.labels
         .map((label) => typeof label === 'string' ? label : label.name ?? '')
         .filter((label) => label && !statusLabels.has(label.toLowerCase()));
@@ -173,34 +131,23 @@ const tools: ToolDefinition[] = [
         title: { type: 'string', minLength: 1, maxLength: 256 },
         body: { type: 'string', maxLength: 65536 },
         issuebanLabel: { type: 'string', maxLength: 50 },
-        columns: {
-          type: 'array', minItems: 1, maxItems: 10,
-          items: {
-            type: 'object',
-            properties: {
-              id: { type: 'string', minLength: 1 },
-              label: { type: 'string', minLength: 1, maxLength: 50 },
-              color: { type: 'string', pattern: '^#?[0-9a-fA-F]{6}$' }
-            },
-            required: ['id', 'label', 'color']
-          }
-        }
       },
-      required: ['repository', 'columnId', 'title', 'columns'],
+      required: ['columnId', 'title'],
       additionalProperties: false
     },
-    run: async (token, params) => {
+    run: async (token, params, settings) => {
       const args = parseArgs(createCardSchema, params) as {
-        repository: string; columnId: string; title: string; body?: string; issuebanLabel?: string;
-        columns: { id: string; label: string; color: string }[];
+        repository?: string; columnId: string; title: string; body?: string; issuebanLabel?: string;
       };
-      const column = args.columns.find((item) => item.id === args.columnId);
+      const repository = args.repository ?? resolveRepository(args.issuebanLabel ?? '', settings);
+      if (!repository) throw new Error('Repository not specified and no routing rule or repository configured.');
+      const column = settings.columns.find((item) => item.id === args.columnId);
       if (!column) throw new Error(`Column not found: ${args.columnId}`);
 
-      await ensureLabel(token, args.repository, column.label, column.color);
+      await ensureLabel(token, repository, column.label, column.color);
       const labels = [column.label];
       if (args.issuebanLabel) labels.push(args.issuebanLabel);
-      const issue = await github<Record<string, unknown>>(token, `/repos/${args.repository}/issues`, {
+      const issue = await github<Record<string, unknown>>(token, `/repos/${repository}/issues`, {
         method: 'POST',
         body: JSON.stringify({ title: args.title, body: args.body ?? '', labels })
       });
@@ -246,7 +193,7 @@ function toolError(message: string): Record<string, unknown> {
   return { content: [{ type: 'text', text: message }], isError: true };
 }
 
-async function callTool(id: JsonRpcId | undefined, params: unknown, token: string): Promise<Response> {
+async function callTool(id: JsonRpcId | undefined, params: unknown, token: string, settings: Settings | null): Promise<Response> {
   const parsed = z.object({ name: z.string(), arguments: z.record(z.string(), z.unknown()).optional() }).safeParse(params ?? {});
   if (!parsed.success) return errorResponse(id, -32602, 'Invalid params for tools/call', 400);
 
@@ -254,7 +201,7 @@ async function callTool(id: JsonRpcId | undefined, params: unknown, token: strin
   if (!tool) return errorResponse(id, -32602, `Unknown tool: ${parsed.data.name}`, 400);
 
   try {
-    const data = await tool.run(token, parsed.data.arguments ?? {});
+    const data = await tool.run(token, parsed.data.arguments ?? {}, settings ?? { repositories: [], columns: [], routingRules: [] });
     return resultResponse(id, toolResult(data));
   } catch (error) {
     if (error instanceof GitHubError) return resultResponse(id, toolError(error.message));
@@ -262,7 +209,7 @@ async function callTool(id: JsonRpcId | undefined, params: unknown, token: strin
   }
 }
 
-export async function handleMcpRequest(request: Request, token: string): Promise<Response> {
+export async function handleMcpRequest(request: Request, token: string, settings: Settings | null): Promise<Response> {
   if (request.method === 'OPTIONS') {
     return new Response(null, {
       status: 204,
@@ -308,14 +255,14 @@ export async function handleMcpRequest(request: Request, token: string): Promise
       protocolVersion,
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: 'issueban-github-mcp', version: '0.1.0' },
-      instructions: 'Authenticate with a GitHub personal access token using the Authorization: Bearer header. Board tools require Issueban settings (repositories and columns) as arguments.'
+      instructions: 'Authenticate with a GitHub personal access token using the Authorization: Bearer header. Board settings are automatically loaded from the Issueban workspace associated with the token owner.'
     }, protocolVersion);
   }
   if (method === 'ping') return resultResponse(id, {});
   if (method === 'tools/list') {
     return resultResponse(id, { tools: tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
   }
-  if (method === 'tools/call') return await callTool(id, params, token);
+  if (method === 'tools/call') return await callTool(id, params, token, settings);
   if (method === 'resources/list') return resultResponse(id, { resources: [] });
   if (method === 'prompts/list') return resultResponse(id, { prompts: [] });
   return errorResponse(id, -32601, `Method not found: ${method}`, 400);
