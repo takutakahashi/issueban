@@ -62,6 +62,15 @@ npx wrangler secret put APP_SECRET
 npm run deploy
 ```
 
+### main へのマージで自動リリース
+
+`main` へマージ（push）すると GitHub Actions が typecheck・テスト・D1 migration・ビルド・`wrangler deploy` を順に実行し、本番へ自動デプロイします。ワークフローは `.github/workflows/release.yml` にあり、手動実行（workflow_dispatch）も可能です。リポジトリの Settings → Secrets and variables → Actions に次の secret を登録してください。
+
+- `CLOUDFLARE_API_TOKEN`: Workers Scripts と D1 を編集できる API トークン
+- `CLOUDFLARE_ACCOUNT_ID`: デプロイ先の Cloudflare アカウント ID
+
+手元からデプロイする場合はこれまで通り `npm run deploy` を実行します。
+
 初回ログイン後、歯車アイコンから対象リポジトリ、カラムと同期ラベル、Issueban ラベルごとの作成先を設定します。ルーティングに一致しないラベルは対象リポジトリの先頭へ作成されます。カードを別カラムへ移動すると、既存のカラム用ラベルのみを取り除き、移動先ラベルを追加します。それ以外の GitHub ラベルは維持します。
 
 コメントが付いているカードには最新コメントの抜粋が表示され、コメント数のバッジから Issue の説明とコメント一覧をモーダルで確認できます。コメントは閲覧時に GitHub API から都度取得し、D1 へは保存しません。
