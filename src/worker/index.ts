@@ -6,6 +6,7 @@ import { parsePlanMarkdown, planCommentBody, planItemDigests, PLAN_SOURCE_MARKER
 import { DEFAULT_SETTINGS, resolveRepository, type Settings } from '../shared/types';
 import { decrypt, encrypt, randomToken, sha256 } from './crypto';
 import { createComment, ensureLabel, getIssue, getViewer, github, GitHubError, GitHubIssue, listAllComments, listComments, listIssues, updateComment } from './github';
+import { handleMcpRequest } from './mcp';
 
 type Bindings = {
   DB: D1Database;
@@ -452,6 +453,31 @@ app.post('/api/issues/:owner/:repo/:number/plan/apply', zValidator('json', z.obj
     }
   }
   return c.json({ applied, failed });
+});
+
+app.on(['OPTIONS', 'GET', 'DELETE', 'POST'], '/mcp', async (c) => {
+  if (c.req.method !== 'POST') return handleMcpRequest(c.req.raw, '', null);
+
+  const authorization = c.req.header('Authorization');
+  if (!authorization?.startsWith('Bearer ')) {
+    return c.json({ error: 'Authorization Bearer token required' }, 401, { 'WWW-Authenticate': 'Bearer' });
+  }
+  const token = authorization.slice('Bearer '.length).trim();
+  if (!token) return c.json({ error: 'GitHub token required' }, 401, { 'WWW-Authenticate': 'Bearer' });
+
+  try {
+    const viewer = await getViewer(token);
+    const settings = await c.env.DB.prepare(`SELECT workspaces.settings
+      FROM users JOIN workspaces ON workspaces.id = users.current_workspace_id WHERE users.id = ?`)
+      .bind(viewer.id).first<{ settings: string }>();
+    const workspaceSettings = settings?.settings ? { ...DEFAULT_SETTINGS, ...JSON.parse(settings.settings) } as Settings : null;
+    return handleMcpRequest(c.req.raw, token, workspaceSettings);
+  } catch (error) {
+    if (error instanceof GitHubError && error.status === 401) {
+      return c.json({ error: 'Invalid GitHub token' }, 401, { 'WWW-Authenticate': 'Bearer' });
+    }
+    return c.json({ error: 'GitHub token verification failed' }, 502);
+  }
 });
 
 app.onError((error, c) => {
