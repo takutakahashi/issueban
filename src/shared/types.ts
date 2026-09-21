@@ -4,6 +4,15 @@ export type Settings = { repositories: string[]; columns: Column[]; routingRules
 export type Workspace = { id: string; name: string; role: 'owner' | 'member'; memberCount: number };
 export type WorkspaceMember = { id: number; login: string; avatarUrl: string; role: 'owner' | 'member'; joinedAt: string };
 
+export type Comment = {
+  id: number;
+  author: string;
+  avatarUrl: string;
+  body: string;
+  createdAt: string;
+  htmlUrl: string;
+};
+
 export type Issue = {
   id: number;
   number: number;
@@ -13,8 +22,15 @@ export type Issue = {
   repository: string;
   labels: { name: string; color: string }[];
   assignees: { login: string; avatarUrl: string }[];
+  commentCount: number;
+  latestComment: Comment | null;
   updatedAt: string;
 };
+
+export function commentExcerpt(body: string, length = 150): string {
+  const normalized = body.replace(/\s+/g, ' ').trim();
+  return normalized.length > length ? `${normalized.slice(0, length - 1)}…` : normalized;
+}
 
 export const DEFAULT_SETTINGS: Settings = {
   repositories: [],

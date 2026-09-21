@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, issueColumn, resolveRepository, type Issue } from './types';
+import { commentExcerpt, DEFAULT_SETTINGS, issueColumn, resolveRepository, type Issue } from './types';
 
 describe('board rules', () => {
   it('routes a matching issueban label and falls back to the first repository', () => {
@@ -11,5 +11,10 @@ describe('board rules', () => {
   it('maps GitHub labels to a column', () => {
     const issue = { labels: [{ name: 'STATUS: REVIEW', color: 'fff' }] } as Issue;
     expect(issueColumn(issue, DEFAULT_SETTINGS)).toBe('review');
+  });
+
+  it('collapses a comment body into a single-line excerpt', () => {
+    expect(commentExcerpt('  こんにちは\n\n世界  ')).toBe('こんにちは 世界');
+    expect(commentExcerpt('a'.repeat(200), 20)).toBe(`${'a'.repeat(19)}…`);
   });
 });
