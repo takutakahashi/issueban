@@ -39,9 +39,9 @@ function Login({ onLogin }: { onLogin: () => void }) {
   </main>;
 }
 
-function IssueCard({ issue, settings, currentColumn, onDragStart, onMove, onOpenComments, onOpenPlan }: { issue: Issue; settings: Settings; currentColumn: string; onDragStart: () => void; onMove: (columnId: string) => void; onOpenComments: () => void; onOpenPlan: () => void }) {
+function IssueCard({ issue, settings, currentColumn, onDragStart, onMove, onOpenComments, onOpenPlan, onDelete }: { issue: Issue; settings: Settings; currentColumn: string; onDragStart: () => void; onMove: (columnId: string) => void; onOpenComments: () => void; onOpenPlan: () => void; onDelete: () => void }) {
   return <article className="issue-card" draggable onDragStart={onDragStart}>
-    <div className="issue-meta"><span>{issue.repository}</span><span>#{issue.number}</span></div>
+    <div className="issue-meta"><span>{issue.localOnly ? 'issueban' : issue.repository}</span><span>{issue.localOnly ? 'ローカルカード' : `#${issue.number}`}</span></div>
     <h3>{issue.title}</h3>
     <div className="labels">{issue.labels.slice(0, 3).map((label) => <span key={label.name} style={{ '--label': `#${label.color}` } as React.CSSProperties}>{label.name}</span>)}</div>
     {issue.latestComment && <button type="button" className="comment-preview" onClick={onOpenComments} aria-label={`${issue.title}のコメントを表示`}>
@@ -51,9 +51,11 @@ function IssueCard({ issue, settings, currentColumn, onDragStart, onMove, onOpen
     <footer>
       <div className="avatars">{issue.assignees.slice(0, 3).map((user) => <img key={user.login} src={user.avatarUrl} alt={user.login} title={user.login} />)}</div>
       <div className="card-actions">
-        <button type="button" className="comment-chip plan-chip" onClick={onOpenPlan} aria-label={`${issue.title}のPlanを表示`}><ListChecks size={14} /></button>
-        <button type="button" className="comment-chip" onClick={onOpenComments} aria-label={`${issue.title}のコメント${issue.commentCount}件を表示`}><MessageSquare size={14} />{issue.commentCount}</button>
-        <a href={issue.htmlUrl} target="_blank" rel="noreferrer" aria-label="GitHub で開く"><ArrowUpRight size={16} /></a>
+        {issue.localOnly ? <button type="button" className="comment-chip" onClick={onDelete} aria-label={`${issue.title}のカードを削除`}><Trash2 size={14} /></button> : <>
+          <button type="button" className="comment-chip plan-chip" onClick={onOpenPlan} aria-label={`${issue.title}のPlanを表示`}><ListChecks size={14} /></button>
+          <button type="button" className="comment-chip" onClick={onOpenComments} aria-label={`${issue.title}のコメント${issue.commentCount}件を表示`}><MessageSquare size={14} />{issue.commentCount}</button>
+          <a href={issue.htmlUrl} target="_blank" rel="noreferrer" aria-label="GitHub で開く"><ArrowUpRight size={16} /></a>
+        </>}
       </div>
     </footer>
     <label className="mobile-status">移動先<select aria-label={`${issue.title}の移動先`} value={currentColumn} onChange={(event) => onMove(event.target.value)}>{settings.columns.map((column) => <option key={column.id} value={column.id}>{column.name}</option>)}</select></label>
@@ -122,7 +124,9 @@ function CommentThread({ issue, viewerLogin, onClose, onUpdated }: { issue: Issu
 function CreateIssue({ settings, initialColumn, onClose, onCreated }: { settings: Settings; initialColumn: string; onClose: () => void; onCreated: () => void }) {
   const [form, setForm] = useState({ title: '', body: '', issuebanLabel: '', columnId: initialColumn }); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
   const destination = settings.routingRules.find((rule) => rule.label.toLowerCase() === form.issuebanLabel.toLowerCase())?.repository ?? settings.repositories[0];
-  async function submit(e: React.FormEvent) { e.preventDefault(); setBusy(true); setError(''); try { await api.createIssue(form); onCreated(); } catch (err) { setError(err instanceof Error ? err.message : '作成に失敗しました'); setBusy(false); } }
+  const selectedColumn = settings.columns.find((column) => column.id === form.columnId);
+  const localOnly = selectedColumn?.localOnly ?? false;
+  async function submit(e: React.FormEvent) { e.preventDefault(); setBusy(true); setError(''); try { await api.createIssue({ ...form, localOnly }); onCreated(); } catch (err) { setError(err instanceof Error ? err.message : '作成に失敗しました'); setBusy(false); } }
   return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal" onMouseDown={(e) => e.stopPropagation()}>
     <button className="icon-button close" onClick={onClose}><X size={20} /></button><p className="eyebrow">NEW ISSUE</p><h2>Issue を追加</h2>
     <form onSubmit={submit} className="stack">
@@ -130,8 +134,8 @@ function CreateIssue({ settings, initialColumn, onClose, onCreated }: { settings
       <label>説明<textarea value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} placeholder="背景や完了条件を入力…" /></label>
       <div className="form-grid"><label>Issueban ラベル<input value={form.issuebanLabel} onChange={(e) => setForm({ ...form, issuebanLabel: e.target.value })} placeholder="例: frontend" /></label>
       <label>ステータス<select value={form.columnId} onChange={(e) => setForm({ ...form, columnId: e.target.value })}>{settings.columns.map((column) => <option key={column.id} value={column.id}>{column.name}</option>)}</select></label></div>
-      <div className="destination">作成先 <strong>{destination ?? '未設定'}</strong></div>{error && <p className="form-error">{error}</p>}
-      <button className="button primary" disabled={busy || !destination}>{busy && <LoaderCircle className="spin" size={17} />}Issue を作成</button>
+      <div className="destination">作成先 <strong>{localOnly ? 'issueban' : destination ?? '未設定'}</strong></div>{error && <p className="form-error">{error}</p>}
+      <button className="button primary" disabled={busy || (!localOnly && !destination)}>{busy && <LoaderCircle className="spin" size={17} />}{localOnly ? 'カードを作成' : 'Issue を作成'}</button>
     </form>
   </section></div>;
 }
@@ -239,6 +243,7 @@ function SettingsModal({ value, onClose, onSave }: { value: Settings; onClose: (
         <input aria-label="色" className="color-input" type="color" value={`#${column.color.replace('#', '')}`} onChange={(e) => { const columns = [...draft.columns]; columns[index] = { ...column, color: e.target.value.slice(1) }; setDraft({ ...draft, columns }); }} />
         <input required value={column.name} onChange={(e) => { const columns = [...draft.columns]; columns[index] = { ...column, name: e.target.value }; setDraft({ ...draft, columns }); }} />
         <input required value={column.label} onChange={(e) => { const columns = [...draft.columns]; columns[index] = { ...column, label: e.target.value }; setDraft({ ...draft, columns }); }} />
+        <label className="local-only-toggle"><input type="checkbox" checked={column.localOnly ?? false} onChange={(e) => { const columns = [...draft.columns]; columns[index] = { ...column, localOnly: e.target.checked }; setDraft({ ...draft, columns }); }} />GitHub Issue を作成しない</label>
       </div>)}</div>
       <div className="setting-heading"><div><strong>ラベルルーティング</strong><small>Issueban ラベルごとに作成先を切り替えます</small></div><button type="button" className="text-button" onClick={addRule}>＋ ルール追加</button></div>
       <div className="editable-list">{draft.routingRules.map((rule, index) => <div className="rule-edit" key={rule.id}>
@@ -289,13 +294,26 @@ function Board({ user, onLogout }: { user: User; onLogout: () => void }) {
     try { await api.switchWorkspace(id); window.location.reload(); }
     catch (error) { setErrors([error instanceof Error ? error.message : 'ワークスペースの切り替えに失敗しました']); setSwitchingWorkspace(false); }
   }
-  async function move(issue: Issue, columnId: string) { if (issueColumn(issue, settings) === columnId) return setDragging(null); const target = settings.columns.find((column) => column.id === columnId); if (!target) return; const previous = issues; setIssues(issues.map((item) => item.id === issue.id ? { ...item, labels: [...item.labels.filter((label) => !settings.columns.some((col) => col.label.toLowerCase() === label.name.toLowerCase())), { name: target.label, color: target.color }] } : item)); try { await api.moveIssue(issue, columnId); } catch (error) { setIssues(previous); setErrors([error instanceof Error ? error.message : '移動に失敗しました']); } setDragging(null); }
+  async function move(issue: Issue, columnId: string) {
+    if (issueColumn(issue, settings) === columnId) return setDragging(null);
+    const target = settings.columns.find((column) => column.id === columnId); if (!target) return;
+    const previous = issues;
+    setIssues(issues.map((item) => item.id === issue.id ? { ...item, labels: [...item.labels.filter((label) => !settings.columns.some((col) => col.label.toLowerCase() === label.name.toLowerCase())), { name: target.label, color: target.color }] } : item));
+    try { await (issue.localOnly ? api.moveCard(issue, columnId) : api.moveIssue(issue, columnId)); await load(); }
+    catch (error) { setIssues(previous); setErrors([error instanceof Error ? error.message : '移動に失敗しました']); }
+    setDragging(null);
+  }
+  async function removeCard(issue: Issue) {
+    const previous = issues;
+    setIssues(issues.filter((item) => item.id !== issue.id));
+    try { await api.deleteCard(issue); } catch (error) { setIssues(previous); setErrors([error instanceof Error ? error.message : '削除に失敗しました']); }
+  }
   async function drop(columnId: string) { if (dragging) await move(dragging, columnId); }
   return <div className="app-shell"><header className="topbar"><div className="brand"><span className="brand-mark">ib</span><span>issueban</span></div><div className="top-actions"><label className="workspace-switcher"><span>Workspace</span><select aria-label="ワークスペースを切り替え" value={user.workspace.id} disabled={loading || switchingWorkspace} onChange={(event) => void switchWorkspace(event.target.value)}>{!workspaces.some((workspace) => workspace.id === user.workspace.id) && <option value={user.workspace.id}>{user.workspace.name}</option>}{workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}</select>{switchingWorkspace && <LoaderCircle className="spin" size={15} />}</label><button className="icon-button refresh-button" aria-label="再読み込み" title="再読み込み" onClick={() => void load()}><RefreshCw size={18} className={loading ? 'spin' : ''} /></button><button className="icon-button" aria-label="チーム" title="チーム" onClick={() => setShowTeam(true)}><Users size={18} /></button><button className="icon-button" aria-label="設定" title="設定" onClick={() => setShowSettings(true)}><SettingsIcon size={18} /></button><div className="user"><img src={user.avatarUrl} alt="" /><span>{user.login}</span></div><button className="icon-button logout" aria-label="ログアウト" title="ログアウト" onClick={onLogout}><LogOut size={18} /></button></div></header>
     <main className="board-wrap"><div className="board-heading"><div><p className="eyebrow">WORKSPACE BOARD</p><h1>{user.workspace.name}</h1><p className="board-summary">{issues.length} issues · {settings.repositories.length} repositories</p></div><button className="button primary compact" onClick={() => setCreateColumn(settings.columns[0]?.id ?? '')}><Plus size={18} /><span>Issue を追加</span></button></div>
     {errors.length > 0 && <div className="notice"><AlertCircle size={17} /><div>{errors.map((error) => <p key={error}>{error}</p>)}</div><button onClick={() => setErrors([])}><X size={15} /></button></div>}
     {!loading && settings.repositories.length === 0 ? <section className="empty-state"><div className="empty-icon"><SettingsIcon /></div><h2>最初のリポジトリを接続</h2><p>対象リポジトリとカラムを設定すると、Issue がここに並びます。</p><button className="button primary" onClick={() => setShowSettings(true)}>ボードを設定</button></section> :
-    <div className="board">{settings.columns.map((column) => <section className={`column ${dragging ? 'drag-active' : ''}`} key={column.id} onDragOver={(e) => e.preventDefault()} onDrop={() => void drop(column.id)}><header><div><i style={{ background: `#${column.color}` }} /><h2>{column.name}</h2><span>{grouped[column.id]?.length ?? 0}</span></div><button className="icon-button mini" aria-label={`${column.name}にカードを追加`} onClick={() => setCreateColumn(column.id)}><Plus size={17} /></button></header><div className="card-list">{grouped[column.id]?.map((issue) => <IssueCard key={issue.id} issue={issue} settings={settings} currentColumn={column.id} onDragStart={() => setDragging(issue)} onMove={(columnId) => void move(issue, columnId)} onOpenComments={() => setCommentIssue(issue)} onOpenPlan={() => setPlanIssue(issue)} />)}{loading && [1, 2].map((n) => <div className="issue-card skeleton" key={n} />)}<button className="add-card" onClick={() => setCreateColumn(column.id)}><Plus size={15} />カードを追加</button></div></section>)}</div>}</main>
+    <div className="board">{settings.columns.map((column) => <section className={`column ${dragging ? 'drag-active' : ''}`} key={column.id} onDragOver={(e) => e.preventDefault()} onDrop={() => void drop(column.id)}><header><div><i style={{ background: `#${column.color}` }} /><h2>{column.name}</h2><span>{grouped[column.id]?.length ?? 0}</span></div><button className="icon-button mini" aria-label={`${column.name}にカードを追加`} onClick={() => setCreateColumn(column.id)}><Plus size={17} /></button></header><div className="card-list">{grouped[column.id]?.map((issue) => <IssueCard key={issue.id} issue={issue} settings={settings} currentColumn={column.id} onDragStart={() => setDragging(issue)} onMove={(columnId) => void move(issue, columnId)} onOpenComments={() => setCommentIssue(issue)} onOpenPlan={() => setPlanIssue(issue)} onDelete={() => void removeCard(issue)} />)}{loading && [1, 2].map((n) => <div className="issue-card skeleton" key={n} />)}<button className="add-card" onClick={() => setCreateColumn(column.id)}><Plus size={15} />カードを追加</button></div></section>)}</div>}</main>
     {createColumn && <CreateIssue settings={settings} initialColumn={createColumn} onClose={() => setCreateColumn(null)} onCreated={() => { setCreateColumn(null); void load(); }} />}
     {showSettings && <SettingsModal value={settings} onClose={() => setShowSettings(false)} onSave={async (next) => { const result = await api.saveSettings(next); setSettings(result.settings); void load(); }} />}
     {showTeam && <TeamModal user={user} onClose={() => setShowTeam(false)} />}

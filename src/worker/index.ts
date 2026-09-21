@@ -3,7 +3,7 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { parsePlanMarkdown, planCommentBody, planItemDigests, PLAN_SOURCE_MARKER, removePlanCommentMarker, type ParsedPlanItem, type Plan, type PlanItem } from '../shared/plan';
-import { DEFAULT_SETTINGS, resolveRepository, type Settings } from '../shared/types';
+import { DEFAULT_SETTINGS, resolveRepository, type Issue, type Settings } from '../shared/types';
 import { decrypt, encrypt, randomToken, sha256 } from './crypto';
 import { createComment, ensureLabel, getIssue, getViewer, github, GitHubError, GitHubIssue, listAllComments, listComments, listIssues, updateComment } from './github';
 import { handleMcpRequest } from './mcp';
@@ -19,6 +19,7 @@ type WorkspaceContext = { id: string; name: string; role: 'owner' | 'member' };
 type Variables = { user: { id: number; login: string; avatarUrl: string; authType: string }; token: string; workspace: WorkspaceContext };
 type AppEnv = { Bindings: Bindings; Variables: Variables };
 type PlanLinkRow = { item_digest: string; position: number; target_issue_id: number; target_repository: string; target_issue_number: number };
+type WorkspaceCardRow = { id: number; column_id: string; title: string; body: string; issueban_label: string; created_at: string; updated_at: string };
 
 const app = new Hono<AppEnv>();
 const SESSION_COOKIE = 'issueban_session';
@@ -31,9 +32,33 @@ function jsonError(message: string, status: 400 | 401 | 403 | 404 | 409 | 422 | 
 function settingsSchema() {
   return z.object({
     repositories: z.array(z.string().regex(/^[\w.-]+\/[\w.-]+$/)).max(25),
-    columns: z.array(z.object({ id: z.string().min(1), name: z.string().min(1).max(40), label: z.string().min(1).max(50), color: z.string().regex(/^#?[0-9a-fA-F]{6}$/) })).min(1).max(10),
+    columns: z.array(z.object({ id: z.string().min(1), name: z.string().min(1).max(40), label: z.string().min(1).max(50), color: z.string().regex(/^#?[0-9a-fA-F]{6}$/), localOnly: z.boolean().optional() })).min(1).max(10),
     routingRules: z.array(z.object({ id: z.string(), label: z.string().min(1).max(50), repository: z.string().regex(/^[\w.-]+\/[\w.-]+$/) })).max(50)
   });
+}
+
+function localIssueFromCard(card: WorkspaceCardRow, settings: Settings): Issue {
+  return {
+    id: -card.id,
+    number: -card.id,
+    title: card.title,
+    body: card.body,
+    htmlUrl: '',
+    repository: 'issueban',
+    labels: settings.columns.filter((column) => column.id === card.column_id).map((column) => ({ name: column.label, color: column.color })),
+    assignees: [],
+    commentCount: 0,
+    latestComment: null,
+    updatedAt: card.updated_at,
+    localOnly: true
+  };
+}
+
+async function loadWorkspaceCards(c: Context<AppEnv>, settings: Settings): Promise<Issue[]> {
+  const result = await c.env.DB.prepare(`SELECT id, column_id, title, body, issueban_label, created_at, updated_at
+    FROM workspace_cards WHERE workspace_id = ? ORDER BY created_at, id`)
+    .bind(c.get('workspace').id).all<WorkspaceCardRow>();
+  return result.results.map((card) => localIssueFromCard(card, settings));
 }
 
 async function ensureWorkspace(c: Context<AppEnv>, user: { id: number; login: string }): Promise<WorkspaceContext> {
@@ -281,7 +306,8 @@ app.get('/api/issues', async (c) => {
   const settled = await Promise.allSettled(repos.map((repo) => listIssues(c.get('token'), repo)));
   const issues = settled.flatMap((result) => result.status === 'fulfilled' ? result.value : []);
   const errors = settled.flatMap((result, index) => result.status === 'rejected' ? [{ repository: repos[index], message: result.reason instanceof Error ? result.reason.message : '取得に失敗しました' }] : []);
-  return c.json({ issues, errors });
+  const cards = await loadWorkspaceCards(c, settings);
+  return c.json({ issues: [...issues, ...cards], errors });
 });
 
 app.get('/api/issues/:owner/:repo/:number/comments', async (c) => {
@@ -311,17 +337,67 @@ app.patch('/api/issues/:owner/:repo/:number/comments/:commentId', zValidator('js
   return c.json({ comment });
 });
 
-app.post('/api/issues', zValidator('json', z.object({ title: z.string().min(1).max(256), body: z.string().max(65536).default(''), issuebanLabel: z.string().max(50).default(''), columnId: z.string().min(1) })), async (c) => {
+app.post('/api/issues', zValidator('json', z.object({ title: z.string().min(1).max(256), body: z.string().max(65536).default(''), issuebanLabel: z.string().max(50).default(''), columnId: z.string().min(1), localOnly: z.boolean().default(false) })), async (c) => {
   const input = c.req.valid('json'); const settings = await loadSettings(c);
-  const repository = resolveRepository(input.issuebanLabel, settings);
   const column = settings.columns.find((item) => item.id === input.columnId);
-  if (!repository) return c.json({ error: '作成先リポジトリを設定してください' }, 422);
   if (!column) return c.json({ error: 'カラムが見つかりません' }, 422);
+
+  if (input.localOnly) {
+    const result = await c.env.DB.prepare(`INSERT INTO workspace_cards (workspace_id, column_id, title, body, issueban_label, created_by)
+      VALUES (?, ?, ?, ?, ?, ?) RETURNING id, column_id, title, body, issueban_label, created_at, updated_at`)
+      .bind(c.get('workspace').id, column.id, input.title, input.body, input.issuebanLabel.trim(), c.get('user').id)
+      .first<WorkspaceCardRow>();
+    if (!result) return c.json({ error: 'カードを作成できませんでした' }, 500);
+    return c.json({ issue: localIssueFromCard(result, settings), repository: 'issueban' }, 201);
+  }
+
+  const repository = resolveRepository(input.issuebanLabel, settings);
+  if (!repository) return c.json({ error: '作成先リポジトリを設定してください' }, 422);
   await ensureLabel(c.get('token'), repository, column.label, column.color);
   const labels = [column.label];
   if (input.issuebanLabel) labels.push(input.issuebanLabel);
   const issue = await github<any>(c.get('token'), `/repos/${repository}/issues`, { method: 'POST', body: JSON.stringify({ title: input.title, body: input.body, labels }) });
   return c.json({ issue, repository }, 201);
+});
+
+app.patch('/api/cards/:id/move', zValidator('json', z.object({ columnId: z.string().min(1) })), async (c) => {
+  const cardId = Number(c.req.param('id'));
+  if (!Number.isSafeInteger(cardId) || cardId >= 0) return c.json({ error: 'カードの指定が不正です' }, 422);
+  const workspaceCardId = -cardId;
+  const settings = await loadSettings(c);
+  const card = await c.env.DB.prepare(`SELECT id, column_id, title, body, issueban_label, created_at, updated_at
+    FROM workspace_cards WHERE id = ? AND workspace_id = ?`).bind(workspaceCardId, c.get('workspace').id).first<WorkspaceCardRow>();
+  if (!card) return c.json({ error: 'カードが見つかりません' }, 404);
+  const target = settings.columns.find((item) => item.id === c.req.valid('json').columnId);
+  if (!target) return c.json({ error: 'カラムが見つかりません' }, 422);
+
+  if (!target.localOnly) {
+    const repository = resolveRepository(card.issueban_label, settings);
+    if (!repository) return c.json({ error: '作成先リポジトリを設定してください' }, 422);
+    await ensureLabel(c.get('token'), repository, target.label, target.color);
+    const issue = await github<any>(c.get('token'), `/repos/${repository}/issues`, {
+      method: 'POST',
+      body: JSON.stringify({ title: card.title, body: card.body, labels: [target.label] })
+    });
+    await c.env.DB.prepare('DELETE FROM workspace_cards WHERE id = ?').bind(card.id).run();
+    return c.json({ issue, repository });
+  }
+
+  const updated = await c.env.DB.prepare(`UPDATE workspace_cards SET column_id = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? RETURNING id, column_id, title, body, issueban_label, created_at, updated_at`)
+    .bind(target.id, card.id).first<WorkspaceCardRow>();
+  if (!updated) return c.json({ error: 'カードが見つかりません' }, 404);
+  return c.json({ issue: localIssueFromCard(updated, settings) });
+});
+
+app.delete('/api/cards/:id', async (c) => {
+  const cardId = Number(c.req.param('id'));
+  if (!Number.isSafeInteger(cardId) || cardId >= 0) return c.json({ error: 'カードの指定が不正です' }, 422);
+  const workspaceCardId = -cardId;
+  const result = await c.env.DB.prepare('DELETE FROM workspace_cards WHERE id = ? AND workspace_id = ?')
+    .bind(workspaceCardId, c.get('workspace').id).run();
+  if (result.meta.changes === 0) return c.json({ error: 'カードが見つかりません' }, 404);
+  return c.body(null, 204);
 });
 
 app.patch('/api/issues/:owner/:repo/:number/move', zValidator('json', z.object({ columnId: z.string().min(1) })), async (c) => {

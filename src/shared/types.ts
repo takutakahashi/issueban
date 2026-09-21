@@ -1,4 +1,4 @@
-export type Column = { id: string; name: string; label: string; color: string };
+export type Column = { id: string; name: string; label: string; color: string; localOnly?: boolean };
 export type RoutingRule = { id: string; label: string; repository: string };
 export type Settings = { repositories: string[]; columns: Column[]; routingRules: RoutingRule[] };
 export type Workspace = { id: string; name: string; role: 'owner' | 'member'; memberCount: number };
@@ -25,6 +25,7 @@ export type Issue = {
   commentCount: number;
   latestComment: Comment | null;
   updatedAt: string;
+  localOnly?: boolean;
 };
 
 export function commentExcerpt(body: string, length = 150): string {
