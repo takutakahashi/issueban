@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, ArrowUpRight, Check, Copy, Github, LoaderCircle, LogOut, MessageSquare, Plus, RefreshCw, Settings as SettingsIcon, Trash2, Users, X } from 'lucide-react';
+import { AlertCircle, ArrowUpRight, Check, Copy, Github, LoaderCircle, LogOut, MessageSquare, Pencil, Plus, RefreshCw, Settings as SettingsIcon, Trash2, Users, X } from 'lucide-react';
 import { api } from './api';
 import { commentExcerpt, DEFAULT_SETTINGS, issueColumn, type Comment, type Issue, type Settings, type Workspace, type WorkspaceMember } from '../shared/types';
 
@@ -50,7 +50,7 @@ function IssueCard({ issue, settings, currentColumn, onDragStart, onMove, onOpen
     <footer>
       <div className="avatars">{issue.assignees.slice(0, 3).map((user) => <img key={user.login} src={user.avatarUrl} alt={user.login} title={user.login} />)}</div>
       <div className="card-actions">
-        {issue.commentCount > 0 && <button type="button" className="comment-chip" onClick={onOpenComments} aria-label={`${issue.title}のコメント${issue.commentCount}件を表示`}><MessageSquare size={14} />{issue.commentCount}</button>}
+        <button type="button" className="comment-chip" onClick={onOpenComments} aria-label={`${issue.title}のコメント${issue.commentCount}件を表示`}><MessageSquare size={14} />{issue.commentCount}</button>
         <a href={issue.htmlUrl} target="_blank" rel="noreferrer" aria-label="GitHub で開く"><ArrowUpRight size={16} /></a>
       </div>
     </footer>
@@ -58,13 +58,37 @@ function IssueCard({ issue, settings, currentColumn, onDragStart, onMove, onOpen
   </article>;
 }
 
-function CommentThread({ issue, onClose }: { issue: Issue; onClose: () => void }) {
+function CommentThread({ issue, viewerLogin, onClose, onUpdated }: { issue: Issue; viewerLogin: string; onClose: () => void; onUpdated: (issue: Issue) => void }) {
   const [comments, setComments] = useState<Comment[] | null>(null); const [error, setError] = useState('');
+  const [composer, setComposer] = useState(''); const [editing, setEditing] = useState<{ id: number; body: string } | null>(null);
+  const [busy, setBusy] = useState(false); const [actionError, setActionError] = useState('');
   useEffect(() => {
     let active = true;
     api.comments(issue).then((data) => { if (active) setComments(data.comments); }).catch((err) => { if (active) { setError(err instanceof Error ? err.message : 'コメントの取得に失敗しました'); setComments([]); } });
     return () => { active = false; };
-  }, [issue]);
+  }, [issue.id, issue.repository, issue.number]);
+  function replaceIssue(comment: Comment, created: boolean) {
+    const commentCount = created ? issue.commentCount + 1 : issue.commentCount;
+    const latestComment = created || issue.latestComment?.id === comment.id ? comment : issue.latestComment;
+    onUpdated({ ...issue, commentCount, latestComment });
+  }
+  async function createComment(e: React.FormEvent) {
+    e.preventDefault(); setBusy(true); setActionError('');
+    try {
+      const { comment } = await api.createComment(issue, composer.trim());
+      const nextComments = [...(comments ?? []), comment];
+      setComments(nextComments); setComposer(''); replaceIssue(comment, true);
+    } catch (err) { setActionError(err instanceof Error ? err.message : 'コメントを書き込めませんでした'); } finally { setBusy(false); }
+  }
+  async function updateComment(e: React.FormEvent) {
+    if (!editing) return;
+    e.preventDefault(); setBusy(true); setActionError('');
+    try {
+      const { comment } = await api.updateComment(issue, editing.id, editing.body.trim());
+      const nextComments = (comments ?? []).map((item) => item.id === comment.id ? comment : item);
+      setComments(nextComments); setEditing(null); replaceIssue(comment, false);
+    } catch (err) { setActionError(err instanceof Error ? err.message : 'コメントを編集できませんでした'); } finally { setBusy(false); }
+  }
   return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal comment-modal" onMouseDown={(e) => e.stopPropagation()}>
     <button className="icon-button close" onClick={onClose} aria-label="閉じる"><X size={20} /></button>
     <p className="eyebrow">COMMENTS</p><h2>{issue.title}</h2>
@@ -77,10 +101,19 @@ function CommentThread({ issue, onClose }: { issue: Issue; onClose: () => void }
           {comment.avatarUrl && <img src={comment.avatarUrl} alt="" />}
           <strong>{comment.author}</strong>
           <time dateTime={comment.createdAt}>{new Date(comment.createdAt).toLocaleString('ja-JP')}</time>
+          {comment.author.toLocaleLowerCase() === viewerLogin.toLocaleLowerCase() && <button type="button" className="icon-button mini" disabled={busy} aria-label="コメントを編集" onClick={() => setEditing({ id: comment.id, body: comment.body })}><Pencil size={14} /></button>}
           <a href={comment.htmlUrl} target="_blank" rel="noreferrer" aria-label="GitHub でこのコメントを開く"><ArrowUpRight size={14} /></a>
         </header>
-        <p>{comment.body || '（本文なし）'}</p>
+        {editing?.id === comment.id ? <form className="comment-editor" onSubmit={updateComment}>
+          <textarea required autoFocus value={editing.body} onChange={(e) => setEditing({ ...editing, body: e.target.value })} />
+          <div className="comment-editor-actions"><button type="button" className="button secondary compact" disabled={busy} onClick={() => setEditing(null)}>キャンセル</button><button className="button primary compact" disabled={busy}>{busy && <LoaderCircle className="spin" size={15} />}保存</button></div>
+        </form> : <p>{comment.body || '（本文なし）'}</p>}
       </article>)}</div>}
+    {comments !== null && <form className="comment-composer" onSubmit={createComment}>
+      <textarea required value={composer} disabled={busy} onChange={(e) => setComposer(e.target.value)} placeholder="コメントを書き込む…" aria-label="新しいコメント" />
+      {actionError && <p className="form-error"><AlertCircle size={14} />{actionError}</p>}
+      <button className="button primary compact" disabled={busy || composer.trim().length === 0}>{busy && <LoaderCircle className="spin" size={15} />}コメントを書き込む</button>
+    </form>}
   </section></div>;
 }
 
@@ -175,7 +208,10 @@ function Board({ user, onLogout }: { user: User; onLogout: () => void }) {
     {createColumn && <CreateIssue settings={settings} initialColumn={createColumn} onClose={() => setCreateColumn(null)} onCreated={() => { setCreateColumn(null); void load(); }} />}
     {showSettings && <SettingsModal value={settings} onClose={() => setShowSettings(false)} onSave={async (next) => { const result = await api.saveSettings(next); setSettings(result.settings); void load(); }} />}
     {showTeam && <TeamModal user={user} onClose={() => setShowTeam(false)} />}
-    {commentIssue && <CommentThread issue={commentIssue} onClose={() => setCommentIssue(null)} />}
+    {commentIssue && <CommentThread issue={commentIssue} viewerLogin={user.login} onClose={() => setCommentIssue(null)} onUpdated={(next) => {
+      setIssues((previous) => previous.map((item) => item.id === next.id ? next : item));
+      setCommentIssue((current) => current && current.id === next.id ? next : current);
+    }} />}
   </div>;
 }
 

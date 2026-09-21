@@ -4,7 +4,7 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { DEFAULT_SETTINGS, resolveRepository, type Settings } from '../shared/types';
 import { decrypt, encrypt, randomToken, sha256 } from './crypto';
-import { ensureLabel, getViewer, github, GitHubError, listComments, listIssues } from './github';
+import { createComment, ensureLabel, getViewer, github, GitHubError, listComments, listIssues, updateComment } from './github';
 
 type Bindings = {
   DB: D1Database;
@@ -243,6 +243,25 @@ app.get('/api/issues/:owner/:repo/:number/comments', async (c) => {
   if (!Number.isSafeInteger(number) || number <= 0) return c.json({ error: 'Issue 番号が不正です' }, 422);
   const comments = await listComments(c.get('token'), repository, number);
   return c.json({ comments });
+});
+
+app.post('/api/issues/:owner/:repo/:number/comments', zValidator('json', z.object({ body: z.string().trim().min(1).max(65536) })), async (c) => {
+  const repository = `${c.req.param('owner')}/${c.req.param('repo')}`;
+  const number = Number(c.req.param('number'));
+  if (!Number.isSafeInteger(number) || number <= 0) return c.json({ error: 'Issue 番号が不正です' }, 422);
+  const comment = await createComment(c.get('token'), repository, number, c.req.valid('json').body);
+  return c.json({ comment }, 201);
+});
+
+app.patch('/api/issues/:owner/:repo/:number/comments/:commentId', zValidator('json', z.object({ body: z.string().trim().min(1).max(65536) })), async (c) => {
+  const repository = `${c.req.param('owner')}/${c.req.param('repo')}`;
+  const number = Number(c.req.param('number'));
+  const commentId = Number(c.req.param('commentId'));
+  if (!Number.isSafeInteger(number) || number <= 0 || !Number.isSafeInteger(commentId) || commentId <= 0) {
+    return c.json({ error: 'コメントの指定が不正です' }, 422);
+  }
+  const comment = await updateComment(c.get('token'), repository, number, commentId, c.req.valid('json').body);
+  return c.json({ comment });
 });
 
 app.post('/api/issues', zValidator('json', z.object({ title: z.string().min(1).max(256), body: z.string().max(65536).default(''), issuebanLabel: z.string().max(50).default(''), columnId: z.string().min(1) })), async (c) => {
