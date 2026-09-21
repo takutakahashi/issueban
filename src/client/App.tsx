@@ -316,7 +316,21 @@ function Board({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS); const [issues, setIssues] = useState<Issue[]>([]); const [errors, setErrors] = useState<string[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]); const [switchingWorkspace, setSwitchingWorkspace] = useState(false);
   const [loading, setLoading] = useState(true); const [dragging, setDragging] = useState<Issue | null>(null); const [createColumn, setCreateColumn] = useState<string | null>(null); const [showSettings, setShowSettings] = useState(false); const [showTeam, setShowTeam] = useState(false); const [commentIssue, setCommentIssue] = useState<Issue | null>(null); const [planIssue, setPlanIssue] = useState<Issue | null>(null); const [descriptionIssue, setDescriptionIssue] = useState<Issue | null>(null);
-  const load = useCallback(async () => { setLoading(true); try { const [s, data, spaces] = await Promise.all([api.settings(), api.issues(), api.workspaces()]); setSettings(s.settings); setIssues(data.issues); setWorkspaces(spaces.workspaces); setErrors(data.errors.map((e) => `${e.repository}: ${e.message}`)); } finally { setLoading(false); } }, []);
+  const load = useCallback(async (keepIssue?: Issue) => {
+    setLoading(true);
+    try {
+      const [s, data, spaces] = await Promise.all([api.settings(), api.issues(), api.workspaces()]);
+      setSettings(s.settings);
+      if (!keepIssue) {
+        setIssues(data.issues);
+      } else {
+        const isKept = data.issues.some((issue) => issue.repository === keepIssue.repository && issue.number === keepIssue.number);
+        setIssues(isKept ? data.issues : [...data.issues, keepIssue]);
+      }
+      setWorkspaces(spaces.workspaces);
+      setErrors(data.errors.map((e) => `${e.repository}: ${e.message}`));
+    } finally { setLoading(false); }
+  }, []);
   useEffect(() => { void load(); }, [load]);
   const grouped = useMemo(() => Object.fromEntries(settings.columns.map((column) => [column.id, issues.filter((issue) => issueColumn(issue, settings) === column.id)])), [issues, settings]);
   async function switchWorkspace(id: string) {
@@ -333,11 +347,11 @@ function Board({ user, onLogout }: { user: User; onLogout: () => void }) {
     try {
       if (issue.localOnly) {
         const result = await api.moveCard(issue, columnId);
-        setIssues((current) => current.map((item) => item.id === issue.id ? result.issue : item));
+        await load(result.issue);
       } else {
         await api.moveIssue(issue, columnId);
+        await load();
       }
-      await load();
     }
     catch (error) { setIssues(previous); setErrors([error instanceof Error ? error.message : '移動に失敗しました']); }
     setDragging(null);
