@@ -2,9 +2,10 @@ import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
+import { parsePlanMarkdown, planCommentBody, planItemDigests, PLAN_SOURCE_MARKER, removePlanCommentMarker, type ParsedPlanItem, type Plan, type PlanItem } from '../shared/plan';
 import { DEFAULT_SETTINGS, resolveRepository, type Settings } from '../shared/types';
 import { decrypt, encrypt, randomToken, sha256 } from './crypto';
-import { createComment, ensureLabel, getViewer, github, GitHubError, listComments, listIssues, updateComment } from './github';
+import { createComment, ensureLabel, getIssue, getViewer, github, GitHubError, GitHubIssue, listAllComments, listComments, listIssues, updateComment } from './github';
 import { handleMcpRequest } from './mcp';
 
 type Bindings = {
@@ -17,6 +18,7 @@ type Bindings = {
 type WorkspaceContext = { id: string; name: string; role: 'owner' | 'member' };
 type Variables = { user: { id: number; login: string; avatarUrl: string; authType: string }; token: string; workspace: WorkspaceContext };
 type AppEnv = { Bindings: Bindings; Variables: Variables };
+type PlanLinkRow = { item_digest: string; position: number; target_issue_id: number; target_repository: string; target_issue_number: number };
 
 const app = new Hono<AppEnv>();
 const SESSION_COOKIE = 'issueban_session';
@@ -136,6 +138,50 @@ app.put('/api/settings', zValidator('json', settingsSchema()), async (c) => {
 async function loadSettings(c: Context<AppEnv>): Promise<Settings> {
   const row = await c.env.DB.prepare('SELECT settings FROM workspaces WHERE id = ?').bind(c.get('workspace').id).first<{ settings: string }>();
   return { ...DEFAULT_SETTINGS, ...(row?.settings ? JSON.parse(row.settings) : {}) };
+}
+
+function activePlanComment(comments: Awaited<ReturnType<typeof listAllComments>>) {
+  return comments
+    .filter((comment) => comment.body.startsWith('<!-- issueban:plan -->'))
+    .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))[0] ?? null;
+}
+
+async function loadPlan(c: Context<AppEnv>, repository: string, number: number): Promise<Plan | null> {
+  const token = c.get('token');
+  const settings = await loadSettings(c);
+  const source = await getIssue(token, repository, number);
+  const planComment = activePlanComment(await listAllComments(token, repository, number));
+  if (!planComment) return null;
+
+  const parsed = parsePlanMarkdown(removePlanCommentMarker(planComment.body));
+  const links = await c.env.DB.prepare(`SELECT item_digest, position, target_issue_id, target_repository, target_issue_number
+    FROM plan_item_links WHERE source_issue_id = ? ORDER BY position`)
+    .bind(source.id).all<PlanLinkRow>();
+  const digests = await planItemDigests(source.id, parsed.items);
+  const items: PlanItem[] = parsed.items.map((item: ParsedPlanItem) => {
+    const digest = digests.get(item.position);
+    const link = links.results.find((row) => row.item_digest === digest);
+    return {
+      ...item,
+      repository: settings.repositories[0] ?? '',
+      columnId: settings.columns[0]?.id ?? '',
+      labels: settings.columns[0] ? [settings.columns[0].label] : [],
+      status: link ? 'applied' : 'pending',
+      targetIssue: link ? {
+        id: link.target_issue_id,
+        number: link.target_issue_number,
+        repository: link.target_repository,
+        htmlUrl: `https://github.com/${link.target_repository}/issues/${link.target_issue_number}`
+      } : null
+    };
+  });
+  return {
+    source: { issueId: source.id, repository, number, htmlUrl: source.html_url },
+    commentId: planComment.id,
+    title: parsed.title,
+    body: parsed.body,
+    items
+  };
 }
 
 app.get('/api/workspaces', async (c) => {
@@ -291,6 +337,124 @@ app.patch('/api/issues/:owner/:repo/:number/move', zValidator('json', z.object({
   return c.json({ ok: true });
 });
 
+app.get('/api/issues/:owner/:repo/:number/plan', async (c) => {
+  const repository = `${c.req.param('owner')}/${c.req.param('repo')}`;
+  const number = Number(c.req.param('number'));
+  if (!Number.isSafeInteger(number) || number <= 0) return c.json({ error: 'Issue 番号が不正です' }, 422);
+  const plan = await loadPlan(c, repository, number);
+  return c.json({ plan });
+});
+
+app.put('/api/issues/:owner/:repo/:number/plan', zValidator('json', z.object({ body: z.string().max(65536) })), async (c) => {
+  const repository = `${c.req.param('owner')}/${c.req.param('repo')}`;
+  const number = Number(c.req.param('number'));
+  if (!Number.isSafeInteger(number) || number <= 0) return c.json({ error: 'Issue 番号が不正です' }, 422);
+  const parsed = parsePlanMarkdown(c.req.valid('json').body);
+  if (parsed.items.length === 0) return c.json({ error: 'Plan item を 1 つ以上追加してください' }, 422);
+  if (parsed.items.length > 25) return c.json({ error: 'Plan item は 25 件までです' }, 422);
+  if (parsed.items.some((item) => !item.title || item.title.length > 256 || item.body.length > 65536)) {
+    return c.json({ error: 'Plan item の内容が不正です' }, 422);
+  }
+
+  const token = c.get('token');
+  const source = await getIssue(token, repository, number);
+  const comments = await listAllComments(token, repository, number);
+  const existing = activePlanComment(comments);
+  const body = planCommentBody(c.req.valid('json').body);
+  if (existing) await updateComment(token, repository, number, existing.id, body);
+  else await createComment(token, repository, number, body);
+  return c.json({ plan: await loadPlan(c, repository, number) });
+});
+
+app.post('/api/issues/:owner/:repo/:number/plan/preview', zValidator('json', z.object({ body: z.string().max(65536) })), async (c) => {
+  const parsed = parsePlanMarkdown(c.req.valid('json').body);
+  const settings = await loadSettings(c);
+  const digests = await planItemDigests(0, parsed.items);
+  const items = parsed.items.map((item) => ({
+    ...item,
+    digest: digests.get(item.position),
+    repository: settings.repositories[0] ?? '',
+    columnId: settings.columns[0]?.id ?? '',
+    labels: settings.columns[0] ? [settings.columns[0].label] : []
+  }));
+  return c.json({ title: parsed.title, items });
+});
+
+app.post('/api/issues/:owner/:repo/:number/plan/apply', zValidator('json', z.object({
+  items: z.array(z.object({
+    position: z.number().int().positive(),
+    repository: z.string().regex(/^[\w.-]+\/[\w.-]+$/),
+    columnId: z.string().min(1)
+  })).max(25)
+}), ), async (c) => {
+  const repository = `${c.req.param('owner')}/${c.req.param('repo')}`;
+  const number = Number(c.req.param('number'));
+  if (!Number.isSafeInteger(number) || number <= 0) return c.json({ error: 'Issue 番号が不正です' }, 422);
+  const token = c.get('token');
+  const settings = await loadSettings(c);
+  const source = await getIssue(token, repository, number);
+  const comments = await listAllComments(token, repository, number);
+  const planComment = activePlanComment(comments);
+  if (!planComment) return c.json({ error: 'Plan が登録されていません' }, 422);
+  const parsed = parsePlanMarkdown(removePlanCommentMarker(planComment.body));
+  const requested = new Map(c.req.valid('json').items.map((item) => [item.position, item]));
+  if (requested.size === 0) return c.json({ error: 'Issue 化する Plan item を選択してください' }, 422);
+
+  const digests = await planItemDigests(source.id, parsed.items);
+  const links = await c.env.DB.prepare('SELECT item_digest FROM plan_item_links WHERE source_issue_id = ?')
+    .bind(source.id).all<{ item_digest: string }>();
+  const linked = new Set(links.results.map((row) => row.item_digest));
+  const applied: { position: number; title: string; targetIssue: { id: number; number: number; repository: string; htmlUrl: string } }[] = [];
+  const failed: { position: number; title: string; message: string }[] = [];
+
+  for (const item of parsed.items) {
+    const input = requested.get(item.position);
+    if (!input || item.completed || linked.has(digests.get(item.position) ?? '')) continue;
+    const column = settings.columns.find((candidate) => candidate.id === input.columnId);
+    if (!settings.repositories.includes(input.repository)) {
+      failed.push({ position: item.position, title: item.title, message: '作成先リポジトリが設定されていません' });
+      continue;
+    }
+    if (!column) {
+      failed.push({ position: item.position, title: item.title, message: 'カラムが見つかりません' });
+      continue;
+    }
+    try {
+      await ensureLabel(token, input.repository, column.label, column.color);
+      const issue = await github<GitHubIssue>(token, `/repos/${input.repository}/issues`, {
+        method: 'POST',
+        body: JSON.stringify({
+          title: item.title,
+          body: `${PLAN_SOURCE_MARKER}\nsource_issue_id: ${source.id}\nsource_repository: ${repository}\nsource_issue_number: ${number}\nitem_digest: ${digests.get(item.position)}\n-->\n\n${item.body}\n\n---\nPlan: ${parsed.title || source.title}\nSource: ${source.html_url}\n`,
+          labels: [column.label]
+        })
+      });
+      await c.env.DB.prepare(`INSERT INTO plan_item_links
+        (source_issue_id, item_digest, position, title, target_issue_id, target_repository, target_issue_number, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .bind(source.id, digests.get(item.position), item.position, item.title, issue.id, input.repository, issue.number, c.get('user').id).run();
+      linked.add(digests.get(item.position) ?? '');
+      applied.push({
+        position: item.position,
+        title: item.title,
+        targetIssue: {
+          id: issue.id,
+          number: issue.number,
+          repository: input.repository,
+          htmlUrl: issue.html_url
+        }
+      });
+    } catch (error) {
+      failed.push({
+        position: item.position,
+        title: item.title,
+        message: error instanceof Error ? error.message : 'Issue を作成できませんでした'
+      });
+    }
+  }
+  return c.json({ applied, failed });
+});
+
 app.on(['OPTIONS', 'GET', 'DELETE', 'POST'], '/mcp', async (c) => {
   if (c.req.method !== 'POST') return handleMcpRequest(c.req.raw, '', null);
 
@@ -318,7 +482,10 @@ app.on(['OPTIONS', 'GET', 'DELETE', 'POST'], '/mcp', async (c) => {
 
 app.onError((error, c) => {
   console.error(error);
-  if (error instanceof GitHubError) return c.json({ error: error.message }, error.status === 403 ? 403 : 502);
+  if (error instanceof GitHubError) {
+    const status = error.status >= 400 && error.status < 500 ? error.status : 502;
+    return c.json({ error: error.message }, status as 502);
+  }
   return c.json({ error: '予期しないエラーが発生しました' }, 500);
 });
 
