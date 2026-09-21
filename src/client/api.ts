@@ -26,6 +26,6 @@ export const api = {
   renameWorkspace: (name: string) => request('/api/workspace', { method: 'PATCH', body: JSON.stringify({ name }) }),
   createInvite: () => request<{ code: string; expiresAt: string }>('/api/workspace/invites', { method: 'POST' }),
   removeMember: (id: number) => request(`/api/workspace/members/${id}`, { method: 'DELETE' }),
-  deleteWorkspace: () => request('/api/workspace', { method: 'DELETE' }),
+  deleteWorkspace: () => request<{ nextWorkspaceId: string | null }>('/api/workspace', { method: 'DELETE' }),
   leaveWorkspace: () => request('/api/workspace/leave', { method: 'POST' })
 };
