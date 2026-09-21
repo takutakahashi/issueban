@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { createComment, listComments, listIssues, updateComment } from './github';
+import { createComment, listComments, listIssues, toIssue, updateComment } from './github';
 
 function jsonResponse(data: unknown): Response {
   return new Response(JSON.stringify(data), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -12,6 +12,34 @@ function stubFetch(handler: (url: string, init?: RequestInit) => Response | Prom
 }
 
 afterEach(() => { globalThis.fetch = originalFetch; });
+
+describe('toIssue', () => {
+  it('maps a newly created GitHub issue into a board card', () => {
+    expect(toIssue({
+      id: 42,
+      number: 12,
+      title: 'Issue 化するカード',
+      body: '説明',
+      html_url: 'https://github.com/acme/api/issues/12',
+      updated_at: '2026-09-21T00:00:00Z',
+      comments: 0,
+      labels: [{ name: 'status: progress', color: 'f59e0b' }, 'frontend'],
+      assignees: []
+    }, 'acme/api')).toEqual({
+      id: 42,
+      number: 12,
+      title: 'Issue 化するカード',
+      body: '説明',
+      htmlUrl: 'https://github.com/acme/api/issues/12',
+      repository: 'acme/api',
+      labels: [{ name: 'status: progress', color: 'f59e0b' }, { name: 'frontend', color: '6b7280' }],
+      assignees: [],
+      commentCount: 0,
+      latestComment: null,
+      updatedAt: '2026-09-21T00:00:00Z'
+    });
+  });
+});
 
 describe('listIssues', () => {
   it('maps issue fields and previews the latest comment of commented issues', async () => {

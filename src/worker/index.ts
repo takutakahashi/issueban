@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { parsePlanMarkdown, planCommentBody, planItemDigests, PLAN_SOURCE_MARKER, removePlanCommentMarker, type ParsedPlanItem, type Plan, type PlanItem } from '../shared/plan';
 import { DEFAULT_SETTINGS, resolveRepository, type Issue, type Settings } from '../shared/types';
 import { decrypt, encrypt, randomToken, sha256 } from './crypto';
-import { createComment, ensureLabel, getIssue, getViewer, github, GitHubError, GitHubIssue, listAllComments, listComments, listIssues, updateComment } from './github';
+import { createComment, ensureLabel, getIssue, getViewer, github, GitHubError, GitHubIssue, listAllComments, listComments, listIssues, toIssue, updateComment } from './github';
 import { handleMcpRequest } from './mcp';
 
 type Bindings = {
@@ -375,12 +375,15 @@ app.patch('/api/cards/:id/move', zValidator('json', z.object({ columnId: z.strin
     const repository = resolveRepository(card.issueban_label, settings);
     if (!repository) return c.json({ error: '作成先リポジトリを設定してください' }, 422);
     await ensureLabel(c.get('token'), repository, target.label, target.color);
-    const issue = await github<any>(c.get('token'), `/repos/${repository}/issues`, {
+    const labels = [target.label];
+    if (card.issueban_label) labels.push(card.issueban_label);
+    const issue = await github<GitHubIssue>(c.get('token'), `/repos/${repository}/issues`, {
       method: 'POST',
-      body: JSON.stringify({ title: card.title, body: card.body, labels: [target.label] })
+      body: JSON.stringify({ title: card.title, body: card.body, labels })
     });
-    await c.env.DB.prepare('DELETE FROM workspace_cards WHERE id = ?').bind(card.id).run();
-    return c.json({ issue, repository });
+    await c.env.DB.prepare('DELETE FROM workspace_cards WHERE id = ? AND workspace_id = ?')
+      .bind(card.id, c.get('workspace').id).run();
+    return c.json({ issue: toIssue(issue, repository), repository });
   }
 
   const updated = await c.env.DB.prepare(`UPDATE workspace_cards SET column_id = ?, updated_at = CURRENT_TIMESTAMP
