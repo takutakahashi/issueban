@@ -208,11 +208,15 @@ app.delete('/api/workspace/members/:userId', async (c) => {
 app.delete('/api/workspace', async (c) => {
   if (c.get('workspace').role !== 'owner') return c.json({ error: 'オーナーのみ削除できます' }, 403);
   const workspaceId = c.get('workspace').id;
+  const nextWorkspace = await c.env.DB.prepare(`SELECT workspace_id FROM workspace_members
+    WHERE user_id = ? AND workspace_id != ? ORDER BY joined_at LIMIT 1`)
+    .bind(c.get('user').id, workspaceId).first<{ workspace_id: string }>();
   await c.env.DB.batch([
     c.env.DB.prepare('UPDATE users SET current_workspace_id = NULL WHERE current_workspace_id = ?').bind(workspaceId),
-    c.env.DB.prepare('DELETE FROM workspaces WHERE id = ?').bind(workspaceId)
+    c.env.DB.prepare('DELETE FROM workspaces WHERE id = ?').bind(workspaceId),
+    ...(nextWorkspace ? [c.env.DB.prepare('UPDATE users SET current_workspace_id = ? WHERE id = ?').bind(nextWorkspace.workspace_id, c.get('user').id)] : [])
   ]);
-  return c.body(null, 204);
+  return c.json({ nextWorkspaceId: nextWorkspace?.workspace_id ?? null });
 });
 
 app.post('/api/workspace/leave', async (c) => {

@@ -114,7 +114,7 @@ function TeamModal({ user, onClose }: { user: User; onClose: () => void }) {
       <div className="member-list">{members.map((member) => <div className="member-row" key={member.id}><img src={member.avatarUrl} alt="" /><div><strong>{member.login}</strong><small>{member.role === 'owner' ? 'Owner' : 'Member'}</small></div>{user.workspace.role === 'owner' && member.role !== 'owner' && <button className="icon-button danger" title="メンバーを削除" onClick={() => void action(() => api.removeMember(member.id))}><Trash2 size={16} /></button>}</div>)}</div>
     </div>
     {user.workspace.role === 'member' && <button className="leave-button" disabled={busy} onClick={() => void action(() => api.leaveWorkspace(), true)}>このワークスペースから退出</button>}
-    {user.workspace.role === 'owner' && <button className="delete-workspace-button" disabled={busy} onClick={() => { if (window.confirm(`「${user.workspace.name}」を削除しますか？\nメンバーとボード設定もすべて削除されます。この操作は取り消せません。`)) void action(() => api.deleteWorkspace(), true); }}>ワークスペースを削除</button>}
+    {user.workspace.role === 'owner' && <button className="delete-workspace-button" disabled={busy} onClick={() => { if (window.confirm(`「${user.workspace.name}」を削除しますか？\nメンバーとボード設定もすべて削除されます。この操作は取り消せません。`)) void action(async () => { const result = await api.deleteWorkspace(); if (result.nextWorkspaceId) await api.switchWorkspace(result.nextWorkspaceId); else await api.logout(); }, true); }}>ワークスペースを削除</button>}
     {error && <p className="form-error"><AlertCircle size={14} />{error}</p>}
   </section></div>;
 }
