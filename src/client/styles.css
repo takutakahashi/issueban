@@ -23,7 +23,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .card-icon { display: grid; place-items: center; width: 50px; height: 50px; color: white; background: var(--ink); border-radius: 13px; margin-bottom: 25px; }
 .login-card h2, .modal h2 { font: 800 25px 'Manrope'; letter-spacing: -1px; margin: 0 0 8px; }
 .login-card > p { color: var(--muted); margin: 0 0 28px; }
-.button { border: 0; border-radius: 8px; min-height: 44px; padding: 0 18px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-weight: 700; cursor: pointer; text-decoration: none; transition: .18s ease; }
+.button { border: 0; border-radius: 8px; min-height: 44px; padding: 0 18px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-weight: 700; cursor: pointer; text-decoration: none; transition: .1s ease; }
 .button:hover { transform: translateY(-1px); }
 .button:disabled { cursor: not-allowed; opacity: .5; transform: none; }
 .button.primary { background: var(--orange); color: white; box-shadow: 0 6px 20px #ff6b3528; }
@@ -72,7 +72,7 @@ input:focus, textarea:focus, select:focus { border-color: #8f99a7; box-shadow: 0
 .column header span { color: #44546f; font-size: 11px; background: #dcdfe4; padding: 2px 7px; border-radius: 10px; }
 .icon-button.mini { width: 30px; height: 30px; }
 .card-list { display: grid; gap: 8px; min-height: 80px; overflow-y: auto; padding: 1px 2px 2px; scrollbar-width: thin; }
-.issue-card { padding: 12px; background: white; border: 0; border-radius: 8px; box-shadow: 0 1px 1px #091e4240, 0 0 1px #091e424f; cursor: grab; transition: box-shadow .15s ease, transform .15s ease; }
+.issue-card { padding: 12px; background: white; border: 0; border-radius: 8px; box-shadow: 0 1px 1px #091e4240, 0 0 1px #091e424f; cursor: grab; transition: box-shadow .09s ease, transform .09s ease; }
 .issue-card:hover { box-shadow: 0 2px 5px #091e4240, 0 0 1px #091e424f; transform: translateY(-1px); }
 .issue-card:active { cursor: grabbing; }
 .issue-meta { display: flex; justify-content: space-between; color: #8992a2; font-size: 10px; }
@@ -143,6 +143,9 @@ textarea { resize: vertical; min-height: 96px; }
 .plan-chip { color: var(--orange); }
 .plan-modal { width: min(760px, calc(100vw - 40px)); }
 .plan-modal > label textarea { min-height: 180px; resize: vertical; margin-top: 16px; font-size: 12px; }
+.plan-preview { margin-top: 14px; padding: 14px; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
+.plan-preview > small { color: var(--muted); font-weight: 800; letter-spacing: .08em; }
+.plan-preview h3 { margin: 7px 0 10px; }.plan-preview h4 { margin: 10px 0 4px; }.plan-preview p { margin: 0; white-space: pre-wrap; line-height: 1.55; }
 .plan-items { display: grid; gap: 8px; margin-top: 16px; max-height: min(38vh, 340px); overflow: auto; padding-right: 2px; }
 .plan-item { border: 1px solid var(--line); border-radius: 9px; background: #fbfbfc; padding: 10px; }
 .plan-item header { display: flex; align-items: center; gap: 8px; color: var(--ink); }

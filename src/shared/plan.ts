@@ -11,7 +11,14 @@ export type ParsedPlanItem = {
 export type ParsedPlan = {
   title: string;
   body: string;
+  sections: PlanSection[];
   items: ParsedPlanItem[];
+};
+
+export type PlanSection = {
+  level: number;
+  title: string;
+  body: string;
 };
 
 export type PlanItem = {
@@ -28,8 +35,8 @@ export type PlanItem = {
 };
 
 export type Plan = {
-  source: { issueId: number; repository: string; number: number; htmlUrl: string };
-  commentId: number;
+  source: { kind: 'github' | 'local'; issueId: number; repository: string; number: number; htmlUrl: string };
+  commentId: number | null;
   title: string;
   body: string;
   items: PlanItem[];
@@ -64,11 +71,16 @@ export function parsePlanMarkdown(input: string): ParsedPlan {
   const lines = body.split('\n');
   const title = lines.find((line) => /^#\s+\S/.test(line.trim()))?.replace(/^#\s+/, '').trim() ?? '';
   const items: ParsedPlanItem[] = [];
+  const sections: PlanSection[] = [];
   let current: ParsedPlanItem | null = null;
+  let section: PlanSection | null = null;
 
   for (const rawLine of lines) {
     const line = rawLine.trimEnd();
-    if (/^#{1,2}\s+\S/.test(line)) {
+    const heading = /^(#{1,6})\s+(.+)$/.exec(line.trim());
+    if (heading) {
+      section = { level: heading[1].length, title: heading[2].trim(), body: '' };
+      sections.push(section);
       current = null;
       continue;
     }
@@ -78,13 +90,16 @@ export function parsePlanMarkdown(input: string): ParsedPlan {
       items.push(current);
       continue;
     }
-    if (!current || !line.trim()) continue;
-    if (rawLine.startsWith(' ') || rawLine.startsWith('\t')) {
+    if (current && line.trim() && (rawLine.startsWith(' ') || rawLine.startsWith('\t'))) {
       current.body = current.body ? `${current.body}\n${line.trim()}` : line.trim();
+      continue;
+    }
+    if (section && line.trim()) {
+      section.body = section.body ? `${section.body}\n${line}` : line;
     }
   }
 
-  return { title, body, items };
+  return { title, body, sections, items };
 }
 
 export function planCommentBody(body: string): string {

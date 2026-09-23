@@ -55,6 +55,7 @@ function IssueCard({ issue, settings, currentColumn, onDragStart, onMove, onOpen
       <div className="avatars">{issue.assignees.slice(0, 3).map((user) => <img key={user.login} src={user.avatarUrl} alt={user.login} title={user.login} />)}</div>
       <div className="card-actions">
         {issue.localOnly ? <>
+          <button type="button" className="comment-chip plan-chip" onClick={onOpenPlan} aria-label={`${issue.title}のPlanを表示`}><ListChecks size={14} /></button>
           <button type="button" className="comment-chip" onClick={onOpenDescription} aria-label={`${issue.title}の説明を編集`}><Pencil size={14} /></button>
           <button type="button" className="comment-chip" onClick={onDelete} aria-label={`${issue.title}のカードを削除`}><Trash2 size={14} /></button>
         </> : <>
@@ -235,8 +236,9 @@ function PlanModal({ issue, settings, onClose, onRefresh }: { issue: Issue; sett
   return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal plan-modal" onMouseDown={(e) => e.stopPropagation()}>
     <button className="icon-button close" onClick={onClose} aria-label="閉じる"><X size={20} /></button>
     <p className="eyebrow">PLAN</p><h2>Issue Plan</h2>
-    <p className="comment-issue-meta">{issue.repository} #{issue.number}</p>
-    <label>Plan <textarea value={draft} disabled={busy} onChange={(event) => setDraft(event.target.value)} placeholder={'# Plan\n\n- [ ] 最初の作業\n  詳細'} /></label>
+    <p className="comment-issue-meta">{issue.localOnly ? 'issueban ローカルカード' : `${issue.repository} #${issue.number}`}</p>
+    <label>Plan 文書 <textarea value={draft} disabled={busy} onChange={(event) => setDraft(event.target.value)} placeholder={'# 実装計画\n\n## 目的\n達成したいこと\n\n## 仕様\n実装する内容\n\n## 作業単位（任意）\n- [ ] 最初の作業'} /></label>
+    {parsed.sections.length > 0 && <div className="plan-preview"><small>プレビュー</small><h3>{parsed.title || 'Plan'}</h3>{parsed.sections.filter((section) => section.level > 1).map((section, index) => <section key={`${section.level}-${section.title}-${index}`}><h4>{section.title}</h4>{section.body && <p>{section.body}</p>}</section>)}</div>}
     {plan !== undefined && parsed.items.length > 0 && <div className="plan-items">{parsed.items.map((item) => {
       const option = itemOption(item);
       return <article className="plan-item" key={item.position}>
@@ -254,8 +256,8 @@ function PlanModal({ issue, settings, onClose, onRefresh }: { issue: Issue; sett
     </div>}
     {error && <p className="form-error"><AlertCircle size={14} />{error}</p>}
     <div className="plan-actions">
-      <button className="button secondary" disabled={busy || changed} onClick={() => void apply()}>{busy && <LoaderCircle className="spin" size={15} />}未作成 item を Issue 化</button>
-      <button className="button primary" disabled={busy || parsed.items.length === 0 || parsed.items.length > 25} onClick={() => void save()}>{busy && <LoaderCircle className="spin" size={15} />}保存</button>
+      <button className="button secondary" disabled={busy || changed || !canApply} onClick={() => void apply()}>{busy && <LoaderCircle className="spin" size={15} />}未作成の作業単位を Issue 化</button>
+      <button className="button primary" disabled={busy || !draft.trim() || parsed.items.length > 25} onClick={() => void save()}>{busy && <LoaderCircle className="spin" size={15} />}文書を保存</button>
     </div>
   </section></div>;
 }
@@ -343,18 +345,18 @@ function Board({ user, onLogout }: { user: User; onLogout: () => void }) {
     if (issueColumn(issue, settings) === columnId) return setDragging(null);
     const target = settings.columns.find((column) => column.id === columnId); if (!target) return;
     const previous = issues;
-    setIssues(issues.map((item) => item.id === issue.id ? { ...item, labels: [...item.labels.filter((label) => !settings.columns.some((col) => col.label.toLowerCase() === label.name.toLowerCase())), { name: target.label, color: target.color }] } : item));
+    const optimistic = { ...issue, labels: [...issue.labels.filter((label) => !settings.columns.some((col) => col.label.toLowerCase() === label.name.toLowerCase())), { name: target.label, color: target.color }] };
+    setIssues((current) => current.map((item) => item.id === issue.id ? optimistic : item));
+    setDragging(null);
     try {
       if (issue.localOnly) {
         const result = await api.moveCard(issue, columnId);
-        await load(result.issue);
+        setIssues((current) => current.map((item) => item.id === issue.id ? result.issue : item));
       } else {
         await api.moveIssue(issue, columnId);
-        await load();
       }
     }
     catch (error) { setIssues(previous); setErrors([error instanceof Error ? error.message : '移動に失敗しました']); }
-    setDragging(null);
   }
   async function removeCard(issue: Issue) {
     const previous = issues;

@@ -17,11 +17,24 @@ describe('parsePlanMarkdown', () => {
     const parsed = parsePlanMarkdown(plan);
     expect(parsed.title).toBe('ログイン改善');
     expect(parsed.body).toBe(plan);
+    expect(parsed.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ level: 1, title: 'ログイン改善' }),
+      expect.objectContaining({ level: 2, title: '目的', body: 'OAuth ログインの失敗率を下げる。' })
+    ]));
     expect(parsed.items.map((item) => item.position)).toEqual([1, 2, 3]);
     expect(parsed.items[0].title).toBe('エラー表示を整理する');
     expect(parsed.items[0].body).toBe('invalid_oauth_callback と invalid_oauth_state を区別する。');
     expect(parsed.items[0].completed).toBe(false);
     expect(parsed.items[2].completed).toBe(true);
+  });
+
+  it('keeps a specification document valid without checklist items', () => {
+    const document = '# 検索仕様\n\n## 目的\n高速に検索する。\n\n## 完了条件\n結果が 100ms 以内に返る。';
+    const parsed = parsePlanMarkdown(document);
+    expect(parsed.title).toBe('検索仕様');
+    expect(parsed.body).toBe(document);
+    expect(parsed.items).toEqual([]);
+    expect(parsed.sections[2]).toMatchObject({ title: '完了条件', body: '結果が 100ms 以内に返る。' });
   });
 
   it('parses a plan comment body after the marker', () => {
