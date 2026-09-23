@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, ArrowUpRight, Check, Copy, Github, ListChecks, LoaderCircle, LogOut, MessageSquare, Pencil, Plus, RefreshCw, Settings as SettingsIcon, Trash2, Users, X } from 'lucide-react';
+import { AlertCircle, ArrowDown, ArrowUp, ArrowUpRight, Check, Copy, Github, ListChecks, LoaderCircle, LogOut, MessageSquare, Pencil, Plus, RefreshCw, Settings as SettingsIcon, Trash2, Users, X } from 'lucide-react';
 import { api } from './api';
 import { parsePlanMarkdown, type Plan, type PlanApplyResult, type ParsedPlanItem } from '../shared/plan';
 import { commentExcerpt, DEFAULT_SETTINGS, issueColumn, type Comment, type Issue, type Settings, type Workspace, type WorkspaceMember } from '../shared/types';
@@ -278,6 +278,13 @@ function SettingsModal({ value, onClose, onSave }: { value: Settings; onClose: (
     if (column.name && !window.confirm(`「${column.name}」カラムを削除しますか？\nこのカラムのカードは、設定保存後に先頭カラムへ表示されます。`)) return;
     setDraft({ ...draft, columns: draft.columns.filter((_, columnIndex) => columnIndex !== index) });
   }
+  function moveColumn(index: number, direction: -1 | 1) {
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= draft.columns.length) return;
+    const columns = [...draft.columns];
+    [columns[index], columns[targetIndex]] = [columns[targetIndex], columns[index]];
+    setDraft({ ...draft, columns });
+  }
   function addRule() { setDraft({ ...draft, routingRules: [...draft.routingRules, { id: crypto.randomUUID(), label: '', repository: draft.repositories[0] ?? '' }] }); }
   async function submit(e: React.FormEvent) { e.preventDefault(); setBusy(true); setError(''); try { await onSave(draft); onClose(); } catch (err) { setError(err instanceof Error ? err.message : '保存に失敗しました'); setBusy(false); } }
   return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal settings-modal" onMouseDown={(e) => e.stopPropagation()}>
@@ -289,7 +296,11 @@ function SettingsModal({ value, onClose, onSave }: { value: Settings; onClose: (
         <input aria-label="色" className="color-input" type="color" value={`#${column.color.replace('#', '')}`} onChange={(e) => { const columns = [...draft.columns]; columns[index] = { ...column, color: e.target.value.slice(1) }; setDraft({ ...draft, columns }); }} />
         <input required className="column-name" aria-label="カラム名" placeholder="カラム名" value={column.name} onChange={(e) => { const columns = [...draft.columns]; columns[index] = { ...column, name: e.target.value }; setDraft({ ...draft, columns }); }} />
         <input required className="column-label" aria-label="同期ラベル" placeholder="status: example" value={column.label} onChange={(e) => { const columns = [...draft.columns]; columns[index] = { ...column, label: e.target.value }; setDraft({ ...draft, columns }); }} />
-        <button type="button" className="icon-button danger column-delete" disabled={draft.columns.length <= 1} aria-label={`${column.name || '新しい'}カラムを削除`} title={draft.columns.length <= 1 ? 'カラムは最低 1 件必要です' : 'カラムを削除'} onClick={() => removeColumn(index)}><Trash2 size={16} /></button>
+        <div className="column-actions">
+          <button type="button" className="icon-button mini" disabled={index === 0} aria-label={`${column.name || '新しい'}カラムを上へ移動`} title="上へ移動（ボードでは左）" onClick={() => moveColumn(index, -1)}><ArrowUp size={15} /></button>
+          <button type="button" className="icon-button mini" disabled={index === draft.columns.length - 1} aria-label={`${column.name || '新しい'}カラムを下へ移動`} title="下へ移動（ボードでは右）" onClick={() => moveColumn(index, 1)}><ArrowDown size={15} /></button>
+          <button type="button" className="icon-button danger mini column-delete" disabled={draft.columns.length <= 1} aria-label={`${column.name || '新しい'}カラムを削除`} title={draft.columns.length <= 1 ? 'カラムは最低 1 件必要です' : 'カラムを削除'} onClick={() => removeColumn(index)}><Trash2 size={15} /></button>
+        </div>
         <label className="local-only-toggle"><input type="checkbox" checked={column.localOnly ?? false} onChange={(e) => { const columns = [...draft.columns]; columns[index] = { ...column, localOnly: e.target.checked }; setDraft({ ...draft, columns }); }} />GitHub Issue を作成しない</label>
       </div>)}</div>
       <div className="setting-heading"><div><strong>ラベルルーティング</strong><small>Issueban ラベルごとに作成先を切り替えます</small></div><button type="button" className="text-button" onClick={addRule}>＋ ルール追加</button></div>
