@@ -272,6 +272,12 @@ function SettingsModal({ value, onClose, onSave }: { value: Settings; onClose: (
       columns: [...draft.columns, { id: crypto.randomUUID(), name: '', label: '', color: '6b7280' }]
     });
   }
+  function removeColumn(index: number) {
+    if (draft.columns.length <= 1) return;
+    const column = draft.columns[index];
+    if (column.name && !window.confirm(`「${column.name}」カラムを削除しますか？\nこのカラムのカードは、設定保存後に先頭カラムへ表示されます。`)) return;
+    setDraft({ ...draft, columns: draft.columns.filter((_, columnIndex) => columnIndex !== index) });
+  }
   function addRule() { setDraft({ ...draft, routingRules: [...draft.routingRules, { id: crypto.randomUUID(), label: '', repository: draft.repositories[0] ?? '' }] }); }
   async function submit(e: React.FormEvent) { e.preventDefault(); setBusy(true); setError(''); try { await onSave(draft); onClose(); } catch (err) { setError(err instanceof Error ? err.message : '保存に失敗しました'); setBusy(false); } }
   return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal settings-modal" onMouseDown={(e) => e.stopPropagation()}>
@@ -281,8 +287,9 @@ function SettingsModal({ value, onClose, onSave }: { value: Settings; onClose: (
       <div className="setting-heading"><div><strong>カラムと同期ラベル</strong><small>移動時、このラベルに自動更新されます（最大 10 件）</small></div><button type="button" className="text-button" disabled={draft.columns.length >= 10} onClick={addColumn}>＋ カラム追加</button></div>
       <div className="editable-list">{draft.columns.map((column, index) => <div className="column-edit" key={column.id}>
         <input aria-label="色" className="color-input" type="color" value={`#${column.color.replace('#', '')}`} onChange={(e) => { const columns = [...draft.columns]; columns[index] = { ...column, color: e.target.value.slice(1) }; setDraft({ ...draft, columns }); }} />
-        <input required aria-label="カラム名" placeholder="カラム名" value={column.name} onChange={(e) => { const columns = [...draft.columns]; columns[index] = { ...column, name: e.target.value }; setDraft({ ...draft, columns }); }} />
-        <input required aria-label="同期ラベル" placeholder="status: example" value={column.label} onChange={(e) => { const columns = [...draft.columns]; columns[index] = { ...column, label: e.target.value }; setDraft({ ...draft, columns }); }} />
+        <input required className="column-name" aria-label="カラム名" placeholder="カラム名" value={column.name} onChange={(e) => { const columns = [...draft.columns]; columns[index] = { ...column, name: e.target.value }; setDraft({ ...draft, columns }); }} />
+        <input required className="column-label" aria-label="同期ラベル" placeholder="status: example" value={column.label} onChange={(e) => { const columns = [...draft.columns]; columns[index] = { ...column, label: e.target.value }; setDraft({ ...draft, columns }); }} />
+        <button type="button" className="icon-button danger column-delete" disabled={draft.columns.length <= 1} aria-label={`${column.name || '新しい'}カラムを削除`} title={draft.columns.length <= 1 ? 'カラムは最低 1 件必要です' : 'カラムを削除'} onClick={() => removeColumn(index)}><Trash2 size={16} /></button>
         <label className="local-only-toggle"><input type="checkbox" checked={column.localOnly ?? false} onChange={(e) => { const columns = [...draft.columns]; columns[index] = { ...column, localOnly: e.target.checked }; setDraft({ ...draft, columns }); }} />GitHub Issue を作成しない</label>
       </div>)}</div>
       <div className="setting-heading"><div><strong>ラベルルーティング</strong><small>Issueban ラベルごとに作成先を切り替えます</small></div><button type="button" className="text-button" onClick={addRule}>＋ ルール追加</button></div>
