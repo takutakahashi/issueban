@@ -265,17 +265,24 @@ function PlanModal({ issue, settings, onClose, onRefresh }: { issue: Issue; sett
 function SettingsModal({ value, onClose, onSave }: { value: Settings; onClose: () => void; onSave: (settings: Settings) => Promise<void> }) {
   const [draft, setDraft] = useState<Settings>(structuredClone(value)); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
   const repos = draft.repositories.join('\n');
+  function addColumn() {
+    if (draft.columns.length >= 10) return;
+    setDraft({
+      ...draft,
+      columns: [...draft.columns, { id: crypto.randomUUID(), name: '', label: '', color: '6b7280' }]
+    });
+  }
   function addRule() { setDraft({ ...draft, routingRules: [...draft.routingRules, { id: crypto.randomUUID(), label: '', repository: draft.repositories[0] ?? '' }] }); }
   async function submit(e: React.FormEvent) { e.preventDefault(); setBusy(true); setError(''); try { await onSave(draft); onClose(); } catch (err) { setError(err instanceof Error ? err.message : '保存に失敗しました'); setBusy(false); } }
   return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal settings-modal" onMouseDown={(e) => e.stopPropagation()}>
     <button className="icon-button close" onClick={onClose}><X size={20} /></button><p className="eyebrow">BOARD SETTINGS</p><h2>ボード設定</h2>
     <form onSubmit={submit} className="stack">
       <label>対象リポジトリ <small>1 行に owner/repo を 1 つ</small><textarea value={repos} onChange={(e) => setDraft({ ...draft, repositories: e.target.value.split('\n').map((line) => line.trim()).filter(Boolean) })} placeholder={'acme/web\nacme/api'} /></label>
-      <div className="setting-heading"><div><strong>カラムと同期ラベル</strong><small>移動時、このラベルに自動更新されます</small></div></div>
+      <div className="setting-heading"><div><strong>カラムと同期ラベル</strong><small>移動時、このラベルに自動更新されます（最大 10 件）</small></div><button type="button" className="text-button" disabled={draft.columns.length >= 10} onClick={addColumn}>＋ カラム追加</button></div>
       <div className="editable-list">{draft.columns.map((column, index) => <div className="column-edit" key={column.id}>
         <input aria-label="色" className="color-input" type="color" value={`#${column.color.replace('#', '')}`} onChange={(e) => { const columns = [...draft.columns]; columns[index] = { ...column, color: e.target.value.slice(1) }; setDraft({ ...draft, columns }); }} />
-        <input required value={column.name} onChange={(e) => { const columns = [...draft.columns]; columns[index] = { ...column, name: e.target.value }; setDraft({ ...draft, columns }); }} />
-        <input required value={column.label} onChange={(e) => { const columns = [...draft.columns]; columns[index] = { ...column, label: e.target.value }; setDraft({ ...draft, columns }); }} />
+        <input required aria-label="カラム名" placeholder="カラム名" value={column.name} onChange={(e) => { const columns = [...draft.columns]; columns[index] = { ...column, name: e.target.value }; setDraft({ ...draft, columns }); }} />
+        <input required aria-label="同期ラベル" placeholder="status: example" value={column.label} onChange={(e) => { const columns = [...draft.columns]; columns[index] = { ...column, label: e.target.value }; setDraft({ ...draft, columns }); }} />
         <label className="local-only-toggle"><input type="checkbox" checked={column.localOnly ?? false} onChange={(e) => { const columns = [...draft.columns]; columns[index] = { ...column, localOnly: e.target.checked }; setDraft({ ...draft, columns }); }} />GitHub Issue を作成しない</label>
       </div>)}</div>
       <div className="setting-heading"><div><strong>ラベルルーティング</strong><small>Issueban ラベルごとに作成先を切り替えます</small></div><button type="button" className="text-button" onClick={addRule}>＋ ルール追加</button></div>
