@@ -2,7 +2,7 @@ import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { parsePlanMarkdown, planCommentBody, planItemDigests, PLAN_SOURCE_MARKER, removePlanCommentMarker, type ParsedPlanItem, type Plan, type PlanItem } from '../shared/plan';
+import { parsePlanMarkdown, planCommentBody, planItemDigests, PLAN_SOURCE_MARKER, removePlanCommentMarker, type ParsedPlanItem, type Plan, type PlanApplyResult, type PlanItem } from '../shared/plan';
 import { DEFAULT_SETTINGS, resolveRepository, type Issue, type Settings } from '../shared/types';
 import { decrypt, encrypt, randomToken, sha256 } from './crypto';
 import { createComment, ensureLabel, getIssue, getViewer, github, GitHubError, GitHubIssue, listAllComments, listComments, listIssues, toIssue, updateComment } from './github';
@@ -201,12 +201,45 @@ async function loadPlan(c: Context<AppEnv>, repository: string, number: number):
     };
   });
   return {
-    source: { issueId: source.id, repository, number, htmlUrl: source.html_url },
+    source: { kind: 'github', issueId: source.id, repository, number, htmlUrl: source.html_url },
     commentId: planComment.id,
     title: parsed.title,
     body: parsed.body,
     items
   };
+}
+
+async function workspaceCard(c: Context<AppEnv>, routeId: string): Promise<WorkspaceCardRow | null> {
+  const id = Number(routeId);
+  if (!Number.isSafeInteger(id) || id >= 0) return null;
+  return c.env.DB.prepare(`SELECT id, column_id, title, body, issueban_label, created_at, updated_at
+    FROM workspace_cards WHERE id = ? AND workspace_id = ?`).bind(-id, c.get('workspace').id).first<WorkspaceCardRow>();
+}
+
+async function loadLocalPlan(c: Context<AppEnv>, card: WorkspaceCardRow): Promise<Plan | null> {
+  const stored = await c.env.DB.prepare('SELECT body FROM workspace_card_plans WHERE card_id = ?').bind(card.id).first<{ body: string }>();
+  if (!stored) return null;
+  const parsed = parsePlanMarkdown(stored.body);
+  const links = await c.env.DB.prepare(`SELECT item_digest, position, target_issue_id, target_repository, target_issue_number
+    FROM workspace_card_plan_item_links WHERE card_id = ? ORDER BY position`).bind(card.id).all<PlanLinkRow>();
+  const digests = await planItemDigests(-card.id, parsed.items);
+  const settings = await loadSettings(c);
+  const items: PlanItem[] = parsed.items.map((item) => {
+    const link = links.results.find((row) => row.item_digest === digests.get(item.position));
+    return { ...item, repository: link?.target_repository ?? resolveRepository(card.issueban_label, settings) ?? settings.repositories[0] ?? '',
+      columnId: settings.columns[0]?.id ?? '', labels: [], status: link ? 'applied' : 'pending',
+      targetIssue: link ? { id: link.target_issue_id, number: link.target_issue_number, repository: link.target_repository,
+        htmlUrl: `https://github.com/${link.target_repository}/issues/${link.target_issue_number}` } : null };
+  });
+  return { source: { kind: 'local', issueId: -card.id, repository: 'issueban', number: -card.id, htmlUrl: '' }, commentId: null,
+    title: parsed.title || card.title, body: stored.body, items };
+}
+
+function planValidationError(parsed: ReturnType<typeof parsePlanMarkdown>): string | null {
+  if (!parsed.body.trim()) return 'Plan の本文を入力してください';
+  if (parsed.items.length > 25) return '作業単位は 25 件までです';
+  if (parsed.items.some((item) => !item.title || item.title.length > 256 || item.body.length > 65536)) return '作業単位の内容が不正です';
+  return null;
 }
 
 app.get('/api/workspaces', async (c) => {
@@ -415,6 +448,60 @@ app.patch('/api/cards/:id', zValidator('json', z.object({ body: z.string().max(6
   return c.json({ issue: localIssueFromCard(updated, settings) });
 });
 
+app.get('/api/cards/:id/plan', async (c) => {
+  const card = await workspaceCard(c, c.req.param('id'));
+  if (!card) return c.json({ error: 'カードが見つかりません' }, 404);
+  return c.json({ plan: await loadLocalPlan(c, card) });
+});
+
+app.put('/api/cards/:id/plan', zValidator('json', z.object({ body: z.string().max(65536) })), async (c) => {
+  const card = await workspaceCard(c, c.req.param('id'));
+  if (!card) return c.json({ error: 'カードが見つかりません' }, 404);
+  const body = c.req.valid('json').body;
+  const error = planValidationError(parsePlanMarkdown(body));
+  if (error) return c.json({ error }, 422);
+  await c.env.DB.prepare(`INSERT INTO workspace_card_plans (card_id, body, created_by) VALUES (?, ?, ?)
+    ON CONFLICT(card_id) DO UPDATE SET body = excluded.body, updated_at = CURRENT_TIMESTAMP`)
+    .bind(card.id, body, c.get('user').id).run();
+  return c.json({ plan: await loadLocalPlan(c, card) });
+});
+
+app.post('/api/cards/:id/plan/apply', zValidator('json', z.object({ items: z.array(z.object({
+  position: z.number().int().positive(), repository: z.string().regex(/^[\w.-]+\/[\w.-]+$/), columnId: z.string().min(1)
+})).max(25) })), async (c) => {
+  const card = await workspaceCard(c, c.req.param('id'));
+  if (!card) return c.json({ error: 'カードが見つかりません' }, 404);
+  const plan = await loadLocalPlan(c, card);
+  if (!plan) return c.json({ error: 'Plan が登録されていません' }, 422);
+  const parsed = parsePlanMarkdown(plan.body);
+  const requested = new Map(c.req.valid('json').items.map((item) => [item.position, item]));
+  if (requested.size === 0) return c.json({ error: 'Issue 化する作業単位を選択してください' }, 422);
+  const settings = await loadSettings(c);
+  const digests = await planItemDigests(-card.id, parsed.items);
+  const existing = await c.env.DB.prepare('SELECT item_digest FROM workspace_card_plan_item_links WHERE card_id = ?').bind(card.id).all<{ item_digest: string }>();
+  const linked = new Set(existing.results.map((row) => row.item_digest));
+  const applied: PlanApplyResult['applied'] = []; const failed: PlanApplyResult['failed'] = [];
+  for (const item of parsed.items) {
+    const input = requested.get(item.position); const digest = digests.get(item.position) ?? '';
+    if (!input || item.completed || linked.has(digest)) continue;
+    const column = settings.columns.find((candidate) => candidate.id === input.columnId);
+    if (!settings.repositories.includes(input.repository)) { failed.push({ position: item.position, title: item.title, message: '作成先リポジトリが設定されていません' }); continue; }
+    if (!column) { failed.push({ position: item.position, title: item.title, message: 'カラムが見つかりません' }); continue; }
+    try {
+      await ensureLabel(c.get('token'), input.repository, column.label, column.color);
+      const issue = await github<GitHubIssue>(c.get('token'), `/repos/${input.repository}/issues`, { method: 'POST', body: JSON.stringify({
+        title: item.title, labels: [column.label], body: `${PLAN_SOURCE_MARKER}\nsource_type: local_card\nsource_card_id: ${card.id}\nitem_digest: ${digest}\n-->\n\n${item.body}\n\n---\nPlan: ${parsed.title || card.title}\nSource: issueban local card #${card.id}\n`
+      }) });
+      await c.env.DB.prepare(`INSERT INTO workspace_card_plan_item_links
+        (card_id, item_digest, position, title, target_issue_id, target_repository, target_issue_number, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .bind(card.id, digest, item.position, item.title, issue.id, input.repository, issue.number, c.get('user').id).run();
+      linked.add(digest);
+      applied.push({ position: item.position, title: item.title, targetIssue: { id: issue.id, number: issue.number, repository: input.repository, htmlUrl: issue.html_url } });
+    } catch (cause) { failed.push({ position: item.position, title: item.title, message: cause instanceof Error ? cause.message : 'Issue を作成できませんでした' }); }
+  }
+  return c.json({ applied, failed });
+});
+
 app.patch('/api/issues/:owner/:repo/:number/move', zValidator('json', z.object({ columnId: z.string().min(1) })), async (c) => {
   const repository = `${c.req.param('owner')}/${c.req.param('repo')}`; const number = c.req.param('number');
   const settings = await loadSettings(c); const column = settings.columns.find((item) => item.id === c.req.valid('json').columnId);
@@ -441,11 +528,8 @@ app.put('/api/issues/:owner/:repo/:number/plan', zValidator('json', z.object({ b
   const number = Number(c.req.param('number'));
   if (!Number.isSafeInteger(number) || number <= 0) return c.json({ error: 'Issue 番号が不正です' }, 422);
   const parsed = parsePlanMarkdown(c.req.valid('json').body);
-  if (parsed.items.length === 0) return c.json({ error: 'Plan item を 1 つ以上追加してください' }, 422);
-  if (parsed.items.length > 25) return c.json({ error: 'Plan item は 25 件までです' }, 422);
-  if (parsed.items.some((item) => !item.title || item.title.length > 256 || item.body.length > 65536)) {
-    return c.json({ error: 'Plan item の内容が不正です' }, 422);
-  }
+  const validationError = planValidationError(parsed);
+  if (validationError) return c.json({ error: validationError }, 422);
 
   const token = c.get('token');
   const source = await getIssue(token, repository, number);
