@@ -114,6 +114,7 @@ textarea { resize: vertical; min-height: 96px; }
 .local-only-toggle input { width: 16px; height: 16px; }
 .setting-heading { display: flex; justify-content: space-between; align-items: end; font-size: 13px; }
 .text-button { border: 0; background: transparent; color: var(--orange); font-weight: 700; font-size: 12px; cursor: pointer; }
+.text-button:disabled { color: #9aa2af; cursor: not-allowed; }
 .editable-list { display: grid; gap: 7px; }
 .column-edit { display: grid; grid-template-columns: 35px .8fr 1.2fr; gap: 7px; }
 .color-input { padding: 4px; height: 40px; }
